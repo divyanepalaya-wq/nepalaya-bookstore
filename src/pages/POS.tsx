@@ -1,23 +1,25 @@
 import { useState, useEffect, useRef } from 'react'
 import {
-  collection, query, runTransaction,
+  collection, query, runTransaction, Timestamp,
   doc, addDoc, updateDoc, getDocs, where, serverTimestamp, increment,
 } from 'firebase/firestore'
 import toast from 'react-hot-toast'
 import {
   Search, ShoppingCart, Trash2, Plus, Minus, UserSearch,
-  X, CheckCircle, Receipt, Tag, AlertCircle,
+  X, CheckCircle, Receipt, Tag, AlertCircle, Printer, RotateCcw, Clock,
 } from 'lucide-react'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/contexts/AuthContext'
 import { useBooks } from '@/contexts/BooksContext'
 import { writeAuditLog } from '@/lib/auditLog'
 import { formatCurrency, cn } from '@/lib/utils'
-import type { Book, Customer, CartItem, PaymentMethod, Discount } from '@/types'
+import { printReceipt } from '@/lib/receipt'
+import type { Book, Customer, CartItem, PaymentMethod, Discount, Sale } from '@/types'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
 import { Badge } from '@/components/ui/Badge'
+import { UserAvatar } from '@/components/ui/Avatar'
 
 const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: 'cash',          label: 'Cash' },
@@ -63,6 +65,28 @@ export default function POS() {
   const [submitting, setSubmitting] = useState(false)
   const [lastSaleId, setLastSaleId] = useState('')
   const [successCountdown, setSuccessCountdown] = useState(4)
+  const [lastSaleData, setLastSaleData] = useState<Sale | null>(null)
+
+  // Shift close
+  const [shiftModalOpen, setShiftModalOpen] = useState(false)
+  const [shiftLoading, setShiftLoading] = useState(false)
+  const [shiftStats, setShiftStats] = useState<{
+    saleCount: number; totalRevenue: number; cashRevenue: number; cashSaleCount: number
+  } | null>(null)
+  const [openingFloat, setOpeningFloat] = useState('')
+  const [actualCash, setActualCash] = useState('')
+  const [shiftNotes, setShiftNotes] = useState('')
+  const [shiftSubmitting, setShiftSubmitting] = useState(false)
+
+  // Return
+  const [returnModalOpen, setReturnModalOpen] = useState(false)
+  const [returnPhoneSearch, setReturnPhoneSearch] = useState('')
+  const [returnResults, setReturnResults] = useState<Sale[]>([])
+  const [returnSearching, setReturnSearching] = useState(false)
+  const [selectedReturnSale, setSelectedReturnSale] = useState<Sale | null>(null)
+  const [returnQtys, setReturnQtys] = useState<Record<string, number>>({})
+  const [returnReason, setReturnReason] = useState('')
+  const [returnSubmitting, setReturnSubmitting] = useState(false)
 
   const phoneRef = useRef<HTMLInputElement>(null)
 
@@ -193,6 +217,183 @@ export default function POS() {
     setAmountPaid('')
     setNotes('')
     setPaymentMethod('cash')
+  }
+
+  // ─── Shift close ──────────────────────────────────────────────────────────
+
+  const openShiftModal = async () => {
+    if (!appUser) return
+    setShiftModalOpen(true)
+    setShiftLoading(true)
+    try {
+      const snap = await getDocs(query(
+        collection(db, 'sales'),
+        where('cashierId', '==', appUser.uid),
+      ))
+      const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0)
+      const todaySales = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }) as Sale)
+        .filter((s) => s.status === 'completed' && s.createdAt && s.createdAt.toDate() >= dayStart)
+      const cashSales = todaySales.filter((s) => s.paymentMethod === 'cash')
+      setShiftStats({
+        saleCount: todaySales.length,
+        totalRevenue: todaySales.reduce((sum, s) => sum + s.grandTotal, 0),
+        cashRevenue: cashSales.reduce((sum, s) => sum + s.grandTotal, 0),
+        cashSaleCount: cashSales.length,
+      })
+    } catch { /* silently ignore */ } finally {
+      setShiftLoading(false)
+    }
+  }
+
+  const closeShift = async () => {
+    if (!appUser || !shiftStats) return
+    const float = parseFloat(openingFloat || '0')
+    const actual = parseFloat(actualCash || '0')
+    const expected = float + shiftStats.cashRevenue
+    const variance = actual - expected
+    setShiftSubmitting(true)
+    try {
+      await addDoc(collection(db, 'shiftCloses'), {
+        cashierId: appUser.uid,
+        cashierName: appUser.displayName,
+        openingFloat: float,
+        expectedCash: expected,
+        actualCash: actual,
+        variance,
+        saleCount: shiftStats.saleCount,
+        totalRevenue: shiftStats.totalRevenue,
+        cashSaleCount: shiftStats.cashSaleCount,
+        cashRevenue: shiftStats.cashRevenue,
+        notes: shiftNotes.trim() || null,
+        closedAt: serverTimestamp(),
+      })
+      await writeAuditLog({
+        action: 'shift_closed',
+        entity: 'shiftClose',
+        details: `Shift closed · ${shiftStats.saleCount} sales · Total: ${formatCurrency(shiftStats.totalRevenue)} · Variance: ${formatCurrency(variance)}`,
+        performedBy: appUser.uid,
+        performedByName: appUser.displayName,
+        role: appUser.role,
+      })
+      toast.success('Shift closed successfully')
+      setShiftModalOpen(false)
+      setOpeningFloat('')
+      setActualCash('')
+      setShiftNotes('')
+      setShiftStats(null)
+    } catch {
+      toast.error('Failed to close shift')
+    } finally {
+      setShiftSubmitting(false)
+    }
+  }
+
+  // ─── Return flow ───────────────────────────────────────────────────────────
+
+  const searchReturnSale = async () => {
+    if (!returnPhoneSearch.trim()) return
+    setReturnSearching(true)
+    try {
+      const snap = await getDocs(query(
+        collection(db, 'sales'),
+        where('customerPhone', '==', returnPhoneSearch.trim()),
+      ))
+      const results = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }) as Sale)
+        .filter((s) => s.status === 'completed' && s.returnStatus !== 'full')
+        .sort((a, b) => (b.createdAt?.toDate().getTime() ?? 0) - (a.createdAt?.toDate().getTime() ?? 0))
+        .slice(0, 10)
+      setReturnResults(results)
+      if (results.length === 0) toast('No eligible sales found for this phone number', { icon: 'ℹ️' })
+    } catch {
+      toast.error('Search failed')
+    } finally {
+      setReturnSearching(false)
+    }
+  }
+
+  const selectReturnSale = (sale: Sale) => {
+    setSelectedReturnSale(sale)
+    const qtys: Record<string, number> = {}
+    sale.items.forEach((item) => { qtys[item.bookId] = 0 })
+    setReturnQtys(qtys)
+  }
+
+  const processReturn = async () => {
+    if (!selectedReturnSale || !appUser) return
+    const itemsToReturn = selectedReturnSale.items.filter((item) => (returnQtys[item.bookId] ?? 0) > 0)
+    if (itemsToReturn.length === 0) { toast.error('Select at least one item to return'); return }
+    if (!returnReason.trim()) { toast.error('Return reason is required'); return }
+
+    const refundAmount = itemsToReturn.reduce((sum, item) => {
+      const perUnit = item.subtotal / item.quantity
+      return sum + perUnit * (returnQtys[item.bookId] ?? 0)
+    }, 0)
+
+    setReturnSubmitting(true)
+    try {
+      await runTransaction(db, async (tx) => {
+        for (const item of itemsToReturn) {
+          const qty = returnQtys[item.bookId]
+          const bookRef = doc(db, 'books', item.bookId)
+          const bookSnap = await tx.get(bookRef)
+          const current = (bookSnap.data()?.inStock ?? 0) as number
+          tx.update(bookRef, { inStock: increment(qty), updatedAt: serverTimestamp() })
+          const txRef = doc(collection(db, 'stockTransactions'))
+          tx.set(txRef, {
+            bookId: item.bookId,
+            bookName: item.bookName,
+            type: 'in',
+            quantity: qty,
+            previousStock: current,
+            newStock: current + qty,
+            reason: `Return — sale ${selectedReturnSale.id.slice(-8)}`,
+            reference: selectedReturnSale.id,
+            performedBy: appUser.uid,
+            performedByName: appUser.displayName,
+            createdAt: serverTimestamp(),
+          })
+        }
+      })
+
+      const totalOriginalQty = selectedReturnSale.items.reduce((s, i) => s + i.quantity, 0)
+      const returnedQty = itemsToReturn.reduce((s, item) => s + (returnQtys[item.bookId] ?? 0), 0)
+      await updateDoc(doc(db, 'sales', selectedReturnSale.id), {
+        returnStatus: returnedQty >= totalOriginalQty ? 'full' : 'partial',
+        returnedItems: itemsToReturn.map((item) => ({
+          bookId: item.bookId,
+          bookName: item.bookName,
+          quantityReturned: returnQtys[item.bookId],
+        })),
+        returnReason: returnReason.trim(),
+        returnedBy: appUser.uid,
+        returnedAt: serverTimestamp(),
+        returnRefundAmount: refundAmount,
+      })
+
+      await writeAuditLog({
+        action: 'sale_returned',
+        entity: 'sale',
+        entityId: selectedReturnSale.id,
+        details: `Return for sale ${selectedReturnSale.id.slice(-8)} · ${returnedQty} item(s) · Refund: ${formatCurrency(refundAmount)}`,
+        performedBy: appUser.uid,
+        performedByName: appUser.displayName,
+        role: appUser.role,
+      })
+
+      toast.success(`Return processed · Refund: ${formatCurrency(refundAmount)}`)
+      setReturnModalOpen(false)
+      setReturnPhoneSearch('')
+      setReturnResults([])
+      setSelectedReturnSale(null)
+      setReturnQtys({})
+      setReturnReason('')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Return failed')
+    } finally {
+      setReturnSubmitting(false)
+    }
   }
 
   // ─── Pricing calculations ──────────────────────────────────────────────────
@@ -365,6 +566,27 @@ export default function POS() {
       })
 
       setLastSaleId(saleRef.id)
+      setLastSaleData({
+        id: saleRef.id,
+        customerId: resolvedCustomerId ?? undefined,
+        customerName,
+        customerPhone,
+        items: saleItems,
+        subtotalBeforeDiscount,
+        totalItemDiscounts,
+        orderDiscountPercent,
+        orderDiscountAmount,
+        totalDiscountAmount,
+        grandTotal,
+        paymentMethod,
+        amountPaid: paid,
+        changeGiven: changeDue,
+        notes: notes || undefined,
+        cashierId: appUser.uid,
+        cashierName: appUser.displayName,
+        status: 'completed',
+        createdAt: Timestamp.now(),
+      })
       setCheckoutModalOpen(false)
       setSuccessModalOpen(true)
       clearCart()
@@ -394,9 +616,19 @@ export default function POS() {
     <div className="flex flex-col lg:flex-row gap-4 h-full">
       {/* ── LEFT: Book Search ── */}
       <div className="flex-1 flex flex-col gap-3 min-h-0">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">Point of Sale</h1>
-          <p className="text-sm text-gray-500">Search and add books to the cart</p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">Point of Sale</h1>
+            <p className="text-sm text-gray-500">Search and add books to the cart</p>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <Button variant="outline" size="sm" onClick={() => { setSelectedReturnSale(null); setReturnResults([]); setReturnPhoneSearch(''); setReturnModalOpen(true) }}>
+              <RotateCcw className="h-4 w-4" /> Return
+            </Button>
+            <Button variant="outline" size="sm" onClick={openShiftModal}>
+              <Clock className="h-4 w-4" /> Close Shift
+            </Button>
+          </div>
         </div>
 
         <div className="relative">
@@ -477,9 +709,7 @@ export default function POS() {
                     onClick={() => { selectCustomer(c); setCustomerSearch('') }}
                     className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-gray-50 transition-colors"
                   >
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-accent-100 text-accent-700 text-xs font-bold shrink-0">
-                      {c.name.charAt(0)}
-                    </div>
+                    <UserAvatar name={c.name} className="h-8 w-8 shrink-0" />
                     <div>
                       <p className="text-sm font-medium text-gray-900">{c.name}</p>
                       <p className="text-xs text-gray-400">{c.phone} · {c.totalPurchases} purchase{c.totalPurchases !== 1 ? 's' : ''}</p>
@@ -768,6 +998,134 @@ export default function POS() {
         </div>
       </Modal>
 
+      {/* ── Shift Close Modal ── */}
+      <Modal open={shiftModalOpen} onClose={() => { if (!shiftSubmitting) { setShiftModalOpen(false); setShiftStats(null); setOpeningFloat(''); setActualCash(''); setShiftNotes('') } }} title="Close Shift" size="sm">
+        <div className="space-y-4">
+          {shiftLoading ? (
+            <div className="py-6 text-center text-sm text-gray-400">Loading today's stats…</div>
+          ) : shiftStats ? (
+            <div className="rounded-lg bg-gray-50 p-3 space-y-1.5 text-sm">
+              <div className="flex justify-between"><span className="text-gray-500">Sales today</span><span className="font-medium">{shiftStats.saleCount}</span></div>
+              <div className="flex justify-between"><span className="text-gray-500">Total revenue</span><span className="font-medium">{formatCurrency(shiftStats.totalRevenue)}</span></div>
+              <div className="flex justify-between"><span className="text-gray-500">Cash sales ({shiftStats.cashSaleCount})</span><span className="font-medium">{formatCurrency(shiftStats.cashRevenue)}</span></div>
+            </div>
+          ) : null}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Opening Float (Rs.)</label>
+              <input type="number" min={0} step="0.01" value={openingFloat} onChange={(e) => setOpeningFloat(e.target.value)}
+                placeholder="0.00" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Actual Cash in Drawer</label>
+              <input type="number" min={0} step="0.01" value={actualCash} onChange={(e) => setActualCash(e.target.value)}
+                placeholder="0.00" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            </div>
+          </div>
+          {shiftStats && actualCash && openingFloat !== '' && (
+            (() => {
+              const expected = parseFloat(openingFloat || '0') + shiftStats.cashRevenue
+              const actual = parseFloat(actualCash || '0')
+              const variance = actual - expected
+              return (
+                <div className={cn('rounded-lg p-3 text-sm', variance === 0 ? 'bg-green-50' : Math.abs(variance) < 50 ? 'bg-yellow-50' : 'bg-red-50')}>
+                  <div className="flex justify-between"><span className="text-gray-600">Expected cash</span><span className="font-medium">{formatCurrency(expected)}</span></div>
+                  <div className="flex justify-between font-semibold mt-1">
+                    <span>Variance</span>
+                    <span className={variance > 0 ? 'text-green-700' : variance < 0 ? 'text-red-700' : 'text-gray-700'}>
+                      {variance >= 0 ? '+' : ''}{formatCurrency(variance)}
+                    </span>
+                  </div>
+                </div>
+              )
+            })()
+          )}
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Notes (optional)</label>
+            <input value={shiftNotes} onChange={(e) => setShiftNotes(e.target.value)} placeholder="Any remarks about this shift…"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+          </div>
+          <div className="flex gap-3">
+            <Button variant="outline" className="flex-1" disabled={shiftSubmitting} onClick={() => setShiftModalOpen(false)}>Cancel</Button>
+            <Button className="flex-1" loading={shiftSubmitting} disabled={!shiftStats} onClick={closeShift}>Close Shift</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Return Modal ── */}
+      <Modal open={returnModalOpen} onClose={() => { if (!returnSubmitting) { setReturnModalOpen(false); setSelectedReturnSale(null); setReturnResults([]); setReturnPhoneSearch(''); setReturnReason('') } }} title={selectedReturnSale ? 'Select Items to Return' : 'Process Return'} size="md">
+        {!selectedReturnSale ? (
+          <div className="space-y-4">
+            <div className="flex gap-2">
+              <input
+                value={returnPhoneSearch}
+                onChange={(e) => setReturnPhoneSearch(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && searchReturnSale()}
+                placeholder="Customer phone number…"
+                className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+              <Button onClick={searchReturnSale} loading={returnSearching}>Search</Button>
+            </div>
+            {returnResults.length > 0 && (
+              <div className="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white">
+                {returnResults.map((s) => (
+                  <button key={s.id} onClick={() => selectReturnSale(s)} className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-brand-50 transition-colors">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">#{s.id.slice(-8).toUpperCase()} · {s.customerName}</p>
+                      <p className="text-xs text-gray-400">{s.items.reduce((n, i) => n + i.quantity, 0)} items · {formatCurrency(s.grandTotal)} · {s.paymentMethod}</p>
+                    </div>
+                    {s.returnStatus === 'partial' && <span className="text-xs text-amber-600 font-medium">Partial return</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="rounded-lg bg-gray-50 px-3 py-2 text-sm flex items-center justify-between">
+              <span className="text-gray-600">Sale #{selectedReturnSale.id.slice(-8).toUpperCase()} · {selectedReturnSale.customerName}</span>
+              <button onClick={() => { setSelectedReturnSale(null); setReturnQtys({}) }} className="text-xs text-brand-600 hover:underline">Change</button>
+            </div>
+            <div className="space-y-2">
+              {selectedReturnSale.items.map((item) => (
+                <div key={item.bookId} className="flex items-center gap-3 rounded-lg border border-gray-200 px-3 py-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">{item.bookName}</p>
+                    <p className="text-xs text-gray-400">Qty: {item.quantity} · {formatCurrency(item.subtotal)}</p>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setReturnQtys((p) => ({ ...p, [item.bookId]: Math.max(0, (p[item.bookId] ?? 0) - 1) }))} className="rounded p-1 hover:bg-gray-100"><Minus className="h-3 w-3" /></button>
+                    <span className="w-8 text-center text-sm font-medium">{returnQtys[item.bookId] ?? 0}</span>
+                    <button onClick={() => setReturnQtys((p) => ({ ...p, [item.bookId]: Math.min(item.quantity, (p[item.bookId] ?? 0) + 1) }))} className="rounded p-1 hover:bg-gray-100"><Plus className="h-3 w-3" /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {Object.values(returnQtys).some((q) => q > 0) && (
+              <div className="rounded-lg bg-brand-50 px-3 py-2 text-sm flex justify-between">
+                <span className="text-brand-700">Refund estimate</span>
+                <span className="font-semibold text-brand-800">
+                  {formatCurrency(selectedReturnSale.items.reduce((sum, item) => {
+                    const qty = returnQtys[item.bookId] ?? 0
+                    return sum + (item.subtotal / item.quantity) * qty
+                  }, 0))}
+                </span>
+              </div>
+            )}
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Return Reason *</label>
+              <input value={returnReason} onChange={(e) => setReturnReason(e.target.value)}
+                placeholder="e.g. Damaged book, wrong title…"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            </div>
+            <div className="flex gap-3">
+              <Button variant="outline" className="flex-1" disabled={returnSubmitting} onClick={() => { setSelectedReturnSale(null); setReturnQtys({}) }}>Back</Button>
+              <Button className="flex-1" loading={returnSubmitting} onClick={processReturn}>Confirm Return</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       {/* ── Success Modal ── */}
       <Modal
         open={successModalOpen}
@@ -781,9 +1139,14 @@ export default function POS() {
           </div>
           <p className="text-lg font-semibold text-gray-900">Sale recorded!</p>
           <p className="text-sm text-gray-500">Sale ID: <span className="font-mono text-xs">{lastSaleId.slice(-8)}</span></p>
-          <Button className="w-full" onClick={() => setSuccessModalOpen(false)}>
-            New Sale ({successCountdown}s)
-          </Button>
+          <div className="flex gap-2 w-full">
+            <Button variant="outline" className="flex-1" onClick={() => lastSaleData && printReceipt(lastSaleData)}>
+              <Printer className="h-4 w-4" /> Print Receipt
+            </Button>
+            <Button className="flex-1" onClick={() => setSuccessModalOpen(false)}>
+              New Sale ({successCountdown}s)
+            </Button>
+          </div>
         </div>
       </Modal>
     </div>

@@ -95,6 +95,7 @@ export interface SaleItem {
 }
 
 export type SaleStatus = 'completed' | 'voided'
+export type ReturnStatus = 'none' | 'partial' | 'full'
 
 export interface Sale {
   id: string
@@ -118,7 +119,31 @@ export interface Sale {
   voidReason?: string
   voidedBy?: string
   voidedAt?: Timestamp
+  returnStatus?: ReturnStatus
+  returnedItems?: { bookId: string; bookName: string; quantityReturned: number }[]
+  returnReason?: string
+  returnedBy?: string
+  returnedAt?: Timestamp
+  returnRefundAmount?: number
   createdAt: Timestamp
+}
+
+// ─── Shift Close ──────────────────────────────────────────────────────────────
+
+export interface ShiftClose {
+  id: string
+  cashierId: string
+  cashierName: string
+  openingFloat: number
+  expectedCash: number
+  actualCash: number
+  variance: number
+  saleCount: number
+  totalRevenue: number
+  cashSaleCount: number
+  cashRevenue: number
+  notes?: string
+  closedAt: Timestamp
 }
 
 // ─── Discount ─────────────────────────────────────────────────────────────────
@@ -161,6 +186,8 @@ export type AuditAction =
   | 'discount_deleted'
   | 'password_changed'
   | 'profile_updated'
+  | 'sale_returned'
+  | 'shift_closed'
 
 export interface AuditLog {
   id: string

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
   collection, onSnapshot, getDocs, query, orderBy,
-  doc, setDoc, updateDoc, serverTimestamp, limit,
+  doc, setDoc, updateDoc, serverTimestamp, limit, runTransaction, increment,
 } from 'firebase/firestore'
 
 import { useForm } from 'react-hook-form'
@@ -11,7 +11,7 @@ import toast from 'react-hot-toast'
 import {
   BarChart2, Users, Receipt, FileText, BookOpen, Package,
   TrendingUp, AlertTriangle, Plus, Search, UserX, UserCheck,
-  ShoppingBag, DollarSign, Download,
+  ShoppingBag, DollarSign, Download, Printer, RotateCcw, Minus,
 } from 'lucide-react'
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis,
@@ -19,11 +19,13 @@ import {
 } from 'recharts'
 import { format, subDays } from 'date-fns'
 import { db, createUserViaRest } from '@/lib/firebase'
+import { printReceipt } from '@/lib/receipt'
 import { useAuth } from '@/contexts/AuthContext'
 import { useBooks } from '@/contexts/BooksContext'
 import { writeAuditLog } from '@/lib/auditLog'
 import { formatCurrency, formatDateTime } from '@/lib/utils'
-import type { AppUser, Sale, AuditLog, UserRole } from '@/types'
+import type { AppUser, Sale, AuditLog, UserRole, ReturnStatus } from '@/types'
+import { UserAvatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
@@ -81,6 +83,10 @@ export default function SuperAdmin() {
   const [voidReason, setVoidReason] = useState('')
   const [voidSubmitting, setVoidSubmitting] = useState(false)
   const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
+  const [returnModal, setReturnModal] = useState<Sale | null>(null)
+  const [returnQtys, setReturnQtys] = useState<Record<string, number>>({})
+  const [returnReason, setReturnReason] = useState('')
+  const [returnSubmitting, setReturnSubmitting] = useState(false)
 
   // ─── Data loading ──────────────────────────────────────────────────────────
   // Users and books use live listeners (need real-time for toggling/stock alerts)
@@ -269,6 +275,93 @@ export default function SuperAdmin() {
       toast.error('Failed to void sale')
     } finally {
       setVoidSubmitting(false)
+    }
+  }
+
+  // ─── Return sale ───────────────────────────────────────────────────────────
+
+  const openReturnModal = (sale: Sale) => {
+    setReturnModal(sale)
+    const qtys: Record<string, number> = {}
+    sale.items.forEach((item) => { qtys[item.bookId] = 0 })
+    setReturnQtys(qtys)
+    setReturnReason('')
+  }
+
+  const processReturn = async () => {
+    if (!returnModal || !appUser) return
+    const itemsToReturn = returnModal.items.filter((item) => (returnQtys[item.bookId] ?? 0) > 0)
+    if (itemsToReturn.length === 0) { toast.error('Select at least one item to return'); return }
+    if (!returnReason.trim()) { toast.error('Return reason is required'); return }
+
+    const refundAmount = itemsToReturn.reduce((sum, item) => {
+      const perUnit = item.subtotal / item.quantity
+      return sum + perUnit * (returnQtys[item.bookId] ?? 0)
+    }, 0)
+
+    setReturnSubmitting(true)
+    try {
+      await runTransaction(db, async (tx) => {
+        for (const item of itemsToReturn) {
+          const qty = returnQtys[item.bookId]
+          const bookRef = doc(db, 'books', item.bookId)
+          const bookSnap = await tx.get(bookRef)
+          const current = (bookSnap.data()?.inStock ?? 0) as number
+          tx.update(bookRef, { inStock: increment(qty), updatedAt: serverTimestamp() })
+          const txRef = doc(collection(db, 'stockTransactions'))
+          tx.set(txRef, {
+            bookId: item.bookId,
+            bookName: item.bookName,
+            type: 'in',
+            quantity: qty,
+            previousStock: current,
+            newStock: current + qty,
+            reason: `Return — sale ${returnModal.id.slice(-8)}`,
+            reference: returnModal.id,
+            performedBy: appUser.uid,
+            performedByName: appUser.displayName,
+            createdAt: serverTimestamp(),
+          })
+        }
+      })
+
+      const totalOriginalQty = returnModal.items.reduce((s, i) => s + i.quantity, 0)
+      const returnedQty = itemsToReturn.reduce((s, item) => s + (returnQtys[item.bookId] ?? 0), 0)
+      const updatedSaleFields = {
+        returnStatus: (returnedQty >= totalOriginalQty ? 'full' : 'partial') as ReturnStatus,
+        returnedItems: itemsToReturn.map((item) => ({
+          bookId: item.bookId,
+          bookName: item.bookName,
+          quantityReturned: returnQtys[item.bookId],
+        })),
+        returnReason: returnReason.trim(),
+        returnedBy: appUser.uid,
+        returnedAt: serverTimestamp(),
+        returnRefundAmount: refundAmount,
+      }
+      await updateDoc(doc(db, 'sales', returnModal.id), updatedSaleFields)
+      setSales((prev) => prev.map((s) =>
+        s.id === returnModal.id ? { ...s, ...updatedSaleFields, returnedAt: undefined } : s
+      ))
+
+      await writeAuditLog({
+        action: 'sale_returned',
+        entity: 'sale',
+        entityId: returnModal.id,
+        details: `Return for sale ${returnModal.id.slice(-8)} · ${returnedQty} item(s) · Refund: ${formatCurrency(refundAmount)}`,
+        performedBy: appUser.uid,
+        performedByName: appUser.displayName,
+        role: appUser.role,
+      })
+
+      toast.success(`Return processed · Refund: ${formatCurrency(refundAmount)}`)
+      setReturnModal(null)
+      setReturnQtys({})
+      setReturnReason('')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Return failed')
+    } finally {
+      setReturnSubmitting(false)
     }
   }
 
@@ -614,9 +707,7 @@ export default function SuperAdmin() {
                   <tr key={u.uid} className="hover:bg-gray-50">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-accent-100 text-accent-700 text-sm font-bold shrink-0">
-                          {u.displayName?.charAt(0)}
-                        </div>
+                        <UserAvatar name={u.displayName ?? ''} className="h-8 w-8 shrink-0" />
                         <span className="text-sm font-medium text-gray-900">{u.displayName}</span>
                       </div>
                     </td>
@@ -688,7 +779,7 @@ export default function SuperAdmin() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  {['Sale ID', 'Customer', 'Items', 'Total', 'Payment', 'Cashier', 'Date', 'Status', ''].map((h) => (
+                  {['Sale ID', 'Customer', 'Items', 'Total', 'Payment', 'Cashier', 'Date', 'Status', 'Actions'].map((h) => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">{h}</th>
                   ))}
                 </tr>
@@ -714,20 +805,88 @@ export default function SuperAdmin() {
                       <Badge variant={s.status === 'completed' ? 'green' : 'red'}>{s.status}</Badge>
                     </td>
                     <td className="px-4 py-3">
-                      {s.status === 'completed' && (
-                        <button
-                          onClick={() => setVoidModal(s)}
-                          className="text-xs text-red-500 hover:text-red-700 hover:underline"
-                        >
-                          Void
-                        </button>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {s.status === 'completed' && (
+                          <>
+                            <button
+                              onClick={() => printReceipt(s)}
+                              title="Print receipt"
+                              className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+                            >
+                              <Printer className="h-3.5 w-3.5" />
+                            </button>
+                            {s.returnStatus !== 'full' && (
+                              <button
+                                onClick={() => openReturnModal(s)}
+                                title="Process return"
+                                className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-amber-600 transition-colors"
+                              >
+                                <RotateCcw className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setVoidModal(s)}
+                              className="text-xs text-red-500 hover:text-red-700 hover:underline"
+                            >
+                              Void
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+
+          <Modal open={!!returnModal} onClose={() => { if (!returnSubmitting) { setReturnModal(null); setReturnQtys({}); setReturnReason('') } }} title="Process Return" size="md">
+            <div className="space-y-4">
+              {returnModal && (
+                <>
+                  <div className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-600">
+                    Sale <span className="font-mono font-semibold">#{returnModal.id.slice(-8).toUpperCase()}</span> · {returnModal.customerName} · {formatCurrency(returnModal.grandTotal)}
+                  </div>
+                  <div className="space-y-2">
+                    {returnModal.items.map((item) => (
+                      <div key={item.bookId} className="flex items-center gap-3 rounded-lg border border-gray-200 px-3 py-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-900 truncate">{item.bookName}</p>
+                          <p className="text-xs text-gray-400">Qty: {item.quantity} · {formatCurrency(item.subtotal)}</p>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => setReturnQtys((p) => ({ ...p, [item.bookId]: Math.max(0, (p[item.bookId] ?? 0) - 1) }))} className="rounded p-1 hover:bg-gray-100"><Minus className="h-3 w-3" /></button>
+                          <span className="w-8 text-center text-sm font-medium">{returnQtys[item.bookId] ?? 0}</span>
+                          <button onClick={() => setReturnQtys((p) => ({ ...p, [item.bookId]: Math.min(item.quantity, (p[item.bookId] ?? 0) + 1) }))} className="rounded p-1 hover:bg-gray-100"><span className="text-sm font-medium">+</span></button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {Object.values(returnQtys).some((q) => q > 0) && (
+                    <div className="rounded-lg bg-brand-50 px-3 py-2 text-sm flex justify-between">
+                      <span className="text-brand-700">Refund estimate</span>
+                      <span className="font-semibold text-brand-800">
+                        {formatCurrency(returnModal.items.reduce((sum, item) => {
+                          const qty = returnQtys[item.bookId] ?? 0
+                          return sum + (item.subtotal / item.quantity) * qty
+                        }, 0))}
+                      </span>
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Return Reason *</label>
+                    <input value={returnReason} onChange={(e) => setReturnReason(e.target.value)}
+                      placeholder="e.g. Damaged book, wrong title…"
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+                  </div>
+                  <div className="flex gap-3 justify-end">
+                    <Button variant="outline" disabled={returnSubmitting} onClick={() => { setReturnModal(null); setReturnQtys({}); setReturnReason('') }}>Cancel</Button>
+                    <Button loading={returnSubmitting} onClick={processReturn}>Confirm Return</Button>
+                  </div>
+                </>
+              )}
+            </div>
+          </Modal>
 
           <Modal open={!!voidModal} onClose={() => { if (!voidSubmitting) { setVoidModal(null); setVoidReason('') } }} title="Void Sale" size="sm">
             <div className="space-y-4">
