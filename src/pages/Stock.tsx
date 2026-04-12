@@ -444,7 +444,9 @@ export default function Stock() {
           className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 sm:w-44"
         >
           <option value="">All Categories</option>
-          {CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          {[...new Set(books.map((b) => b.category))].sort().map((cat) => (
+            <option key={cat} value={cat}>{cat}</option>
+          ))}
         </select>
       </div>
 
