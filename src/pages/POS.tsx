@@ -477,7 +477,7 @@ export default function POS() {
                     onClick={() => { selectCustomer(c); setCustomerSearch('') }}
                     className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-gray-50 transition-colors"
                   >
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-100 text-brand-700 text-xs font-bold shrink-0">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-accent-100 text-accent-700 text-xs font-bold shrink-0">
                       {c.name.charAt(0)}
                     </div>
                     <div>

@@ -19,7 +19,7 @@ interface StatCardProps {
   value: string | number
   subtitle?: string
   icon: ReactNode
-  color?: 'blue' | 'green' | 'yellow' | 'red' | 'orange'
+  color?: 'blue' | 'green' | 'yellow' | 'red' | 'orange' | 'brand' | 'accent'
 }
 
 const colorMap = {
@@ -28,6 +28,8 @@ const colorMap = {
   yellow: 'bg-yellow-50 text-yellow-600',
   red:    'bg-red-50 text-red-600',
   orange: 'bg-orange-50 text-orange-600',
+  brand:  'bg-brand-50 text-brand-600',
+  accent: 'bg-accent-50 text-accent-700',
 }
 
 export function StatCard({ title, value, subtitle, icon, color = 'blue' }: StatCardProps) {

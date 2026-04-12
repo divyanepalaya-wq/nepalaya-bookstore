@@ -57,7 +57,7 @@ const userSchema = z.object({
 })
 type UserFormData = z.infer<typeof userSchema>
 
-const CHART_COLORS = ['#f79e0a', '#3b82f6', '#10b981', '#ef4444', '#8b5cf6']
+const CHART_COLORS = ['#f37023', '#9c090e', '#10b981', '#3b82f6', '#8b5cf6']
 
 export default function SuperAdmin() {
   const { appUser } = useAuth()
@@ -381,21 +381,21 @@ export default function SuperAdmin() {
               value={formatCurrency(todayRevenue)}
               subtitle={`${todaySales.length} sales today`}
               icon={<DollarSign className="h-5 w-5" />}
-              color="green"
+              color="accent"
             />
             <StatCard
               title="Total Revenue"
               value={formatCurrency(totalRevenue)}
               subtitle={`${totalSalesCount} total sales`}
               icon={<TrendingUp className="h-5 w-5" />}
-              color="blue"
+              color="brand"
             />
             <StatCard
               title="Avg Order Value"
               value={formatCurrency(avgOrderValue)}
               subtitle="Per completed sale"
               icon={<ShoppingBag className="h-5 w-5" />}
-              color="orange"
+              color="brand"
             />
             <StatCard
               title="Low Stock Alert"
@@ -418,8 +418,8 @@ export default function SuperAdmin() {
               <AreaChart data={revenueChart}>
                 <defs>
                   <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#f79e0a" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#f79e0a" stopOpacity={0} />
+                    <stop offset="5%" stopColor="#f37023" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#f37023" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -427,7 +427,7 @@ export default function SuperAdmin() {
                 <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false}
                   tickFormatter={(v) => `Rs.${(v/1000).toFixed(0)}k`} />
                 <Tooltip formatter={(v: number) => [formatCurrency(v), 'Revenue']} />
-                <Area type="monotone" dataKey="revenue" stroke="#f79e0a" strokeWidth={2}
+                <Area type="monotone" dataKey="revenue" stroke="#f37023" strokeWidth={2}
                   fill="url(#revGrad)" />
               </AreaChart>
             </ResponsiveContainer>
@@ -451,7 +451,7 @@ export default function SuperAdmin() {
                     <XAxis type="number" tick={{ fontSize: 11 }} tickLine={false} />
                     <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={100} tickLine={false} />
                     <Tooltip formatter={(v: number) => [v, 'Copies sold']} />
-                    <Bar dataKey="qty" fill="#f79e0a" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="qty" fill="#f37023" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -524,7 +524,7 @@ export default function SuperAdmin() {
                         name === 'count' ? [v, 'Sales'] : [formatCurrency(v as number), 'Revenue']
                       }
                     />
-                    <Bar dataKey="count" fill="#f79e0a" radius={[3, 3, 0, 0]} name="count" />
+                    <Bar dataKey="count" fill="#9c090e" radius={[3, 3, 0, 0]} name="count" />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -614,7 +614,7 @@ export default function SuperAdmin() {
                   <tr key={u.uid} className="hover:bg-gray-50">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-100 text-brand-700 text-sm font-bold shrink-0">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-accent-100 text-accent-700 text-sm font-bold shrink-0">
                           {u.displayName?.charAt(0)}
                         </div>
                         <span className="text-sm font-medium text-gray-900">{u.displayName}</span>

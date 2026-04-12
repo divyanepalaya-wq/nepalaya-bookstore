@@ -579,7 +579,7 @@ export default function Stock() {
 
       {/* Low stock banner */}
       {lowStockCount > 0 && (
-        <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-2.5 text-sm text-amber-800">
+        <div className="flex items-center gap-2 rounded-lg bg-accent-50 border border-accent-200 px-4 py-2.5 text-sm text-accent-800">
           <AlertTriangle className="h-4 w-4 shrink-0" />
           <span>{lowStockCount} book{lowStockCount > 1 ? 's are' : ' is'} running low on stock.</span>
         </div>
