@@ -10,7 +10,7 @@ import toast from 'react-hot-toast'
 import {
   Plus, Search, ArrowDownCircle, ArrowUpCircle, History,
   Package, AlertTriangle, Pencil, TrendingUp, TrendingDown,
-  Upload, Download, FileSpreadsheet,
+  Upload, Download, FileSpreadsheet, ListChecks, FileDown, X,
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { db } from '@/lib/firebase'
@@ -66,7 +66,17 @@ const CATEGORY_OPTIONS: { value: BookCategory; label: string }[] = [
   { value: 'other',       label: 'Other' },
 ]
 
-type ModalType = null | 'add' | 'edit' | 'stockIn' | 'stockOut' | 'history' | 'import'
+type ModalType = null | 'add' | 'edit' | 'stockIn' | 'stockOut' | 'history' | 'import' | 'bulkEdit'
+
+// ─── Bulk edit schema ──────────────────────────────────────────────────────────
+
+const bulkEditSchema = z.object({
+  category:       z.string().optional(),
+  mrp:            z.union([z.coerce.number().positive('Must be positive'), z.literal('')]).optional(),
+  costPrice:      z.union([z.coerce.number().positive('Must be positive'), z.literal('')]).optional(),
+  minStockAlert:  z.union([z.coerce.number().int().min(0, 'Cannot be negative'), z.literal('')]).optional(),
+})
+type BulkEditData = z.infer<typeof bulkEditSchema>
 
 // ─── Template columns ─────────────────────────────────────────────────────────
 const TEMPLATE_HEADERS = ['name', 'author', 'isbn', 'category', 'publisher', 'mrp', 'costPrice', 'inStock', 'minStockAlert', 'description']
@@ -102,6 +112,8 @@ export default function Stock() {
   const [submitting, setSubmitting] = useState(false)
   const [importRows, setImportRows] = useState<ImportRow[]>([])
   const [importing, setImporting] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkSubmitting, setBulkSubmitting] = useState(false)
 
   // Live books listener
   useEffect(() => {
@@ -384,6 +396,64 @@ export default function Stock() {
     }
   }, [])
 
+  // ─── Bulk edit ────────────────────────────────────────────────────────────
+
+  const bulkForm = useForm<BulkEditData>({ resolver: zodResolver(bulkEditSchema) })
+
+  const saveBulkEdit = async (data: BulkEditData) => {
+    if (!appUser || selectedIds.size === 0) return
+    // Only apply fields that were actually filled in
+    const patch: Record<string, unknown> = { updatedAt: serverTimestamp() }
+    if (data.category)      patch.category      = data.category
+    if (data.mrp !== '')    patch.mrp            = Number(data.mrp)
+    if (data.costPrice !== '') patch.costPrice   = Number(data.costPrice)
+    if (data.minStockAlert !== '') patch.minStockAlert = Number(data.minStockAlert)
+
+    if (Object.keys(patch).length === 1) { toast.error('Fill in at least one field to update'); return }
+
+    setBulkSubmitting(true)
+    try {
+      const ids = [...selectedIds]
+      const BATCH_SIZE = 490
+      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const batch = writeBatch(db)
+        ids.slice(i, i + BATCH_SIZE).forEach((id) => batch.update(doc(db, 'books', id), patch))
+        await batch.commit()
+      }
+      await writeAuditLog({
+        action: 'book_updated',
+        entity: 'book',
+        details: `Bulk updated ${ids.length} book${ids.length !== 1 ? 's' : ''}: ${Object.keys(patch).filter((k) => k !== 'updatedAt').join(', ')}`,
+        performedBy: appUser.uid,
+        performedByName: appUser.displayName,
+        role: appUser.role,
+      })
+      toast.success(`Updated ${ids.length} book${ids.length !== 1 ? 's' : ''}`)
+      setSelectedIds(new Set())
+      setModalType(null)
+      bulkForm.reset()
+    } catch {
+      toast.error('Bulk update failed')
+    } finally {
+      setBulkSubmitting(false)
+    }
+  }
+
+  // ─── Export books ──────────────────────────────────────────────────────────
+
+  const exportBooks = () => {
+    const rows = filtered.map((b) => [
+      b.name, b.author, b.isbn ?? '', b.category, b.publisher ?? '',
+      b.mrp, b.costPrice, b.inStock, b.minStockAlert, b.description ?? '',
+    ])
+    downloadCSV(
+      `nepalaya_books_${new Date().toISOString().slice(0, 10)}.csv`,
+      ['Name', 'Author', 'ISBN', 'Category', 'Publisher', 'MRP (Rs.)', 'Cost Price (Rs.)', 'In Stock', 'Min Stock Alert', 'Description'],
+      rows
+    )
+    toast.success(`Exported ${filtered.length} book${filtered.length !== 1 ? 's' : ''}`)
+  }
+
   // ─── Filtered books ────────────────────────────────────────────────────────
 
   const filtered = books.filter((b) => {
@@ -406,6 +476,12 @@ export default function Stock() {
           <p className="text-sm text-gray-500">{books.length} books · {lowStockCount > 0 && <span className="text-red-500 font-medium">{lowStockCount} low stock</span>}</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={exportBooks}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            <FileDown className="h-4 w-4" /> Export
+          </button>
           <button
             onClick={downloadTemplate}
             className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
@@ -458,6 +534,25 @@ export default function Stock() {
         </div>
       )}
 
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-2.5">
+          <span className="text-sm font-semibold text-brand-700">{selectedIds.size} selected</span>
+          <Button
+            size="sm"
+            onClick={() => { bulkForm.reset(); setModalType('bulkEdit') }}
+          >
+            <ListChecks className="h-4 w-4" /> Bulk Edit
+          </Button>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="ml-auto flex items-center gap-1 text-sm text-brand-600 hover:text-brand-800"
+          >
+            <X className="h-4 w-4" /> Clear selection
+          </button>
+        </div>
+      )}
+
       {/* Table */}
       {loadingBooks ? (
         <PageSpinner />
@@ -466,6 +561,17 @@ export default function Stock() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
+                <th className="pl-4 pr-2 py-3 w-8">
+                  <input
+                    type="checkbox"
+                    className="rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+                    checked={filtered.length > 0 && filtered.every((b) => selectedIds.has(b.id))}
+                    onChange={(e) => {
+                      if (e.target.checked) setSelectedIds(new Set(filtered.map((b) => b.id)))
+                      else setSelectedIds(new Set())
+                    }}
+                  />
+                </th>
                 {['Book', 'Category', 'MRP', 'Cost', 'In Stock', 'Actions'].map((h) => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
                     {h}
@@ -476,7 +582,7 @@ export default function Stock() {
             <tbody className="divide-y divide-gray-100">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-12 text-center text-sm text-gray-400">
+                  <td colSpan={7} className="py-12 text-center text-sm text-gray-400">
                     <Package className="mx-auto h-10 w-10 mb-2 opacity-30" />
                     No books found
                   </td>
@@ -484,8 +590,21 @@ export default function Stock() {
               ) : (
                 filtered.map((book) => {
                   const isLow = book.inStock <= book.minStockAlert
+                  const isSelected = selectedIds.has(book.id)
                   return (
-                    <tr key={book.id} className="hover:bg-gray-50">
+                    <tr key={book.id} className={cn('hover:bg-gray-50', isSelected && 'bg-brand-50')}>
+                      <td className="pl-4 pr-2 py-3">
+                        <input
+                          type="checkbox"
+                          className="rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+                          checked={isSelected}
+                          onChange={(e) => {
+                            const next = new Set(selectedIds)
+                            e.target.checked ? next.add(book.id) : next.delete(book.id)
+                            setSelectedIds(next)
+                          }}
+                        />
+                      </td>
                       <td className="px-4 py-3">
                         <p className="font-medium text-gray-900">{book.name}</p>
                         <p className="text-xs text-gray-400">{book.author}{book.isbn ? ` · ${book.isbn}` : ''}</p>
@@ -541,6 +660,61 @@ export default function Stock() {
           </table>
         </div>
       )}
+
+      {/* ── Bulk Edit Modal ── */}
+      <Modal
+        open={modalType === 'bulkEdit'}
+        onClose={() => setModalType(null)}
+        title={`Bulk Edit — ${selectedIds.size} book${selectedIds.size !== 1 ? 's' : ''}`}
+        size="sm"
+      >
+        <form onSubmit={bulkForm.handleSubmit(saveBulkEdit)} className="space-y-4">
+          <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
+            Leave a field blank to keep its current value. Only filled fields will be updated.
+          </p>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+            <select
+              {...bulkForm.register('category')}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+            >
+              <option value="">— keep current —</option>
+              {[...new Set(books.map((b) => b.category))].sort().map((cat) => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </div>
+          <Input
+            label="MRP (Rs.)"
+            type="number"
+            step="0.01"
+            placeholder="leave blank to keep"
+            error={bulkForm.formState.errors.mrp?.message as string | undefined}
+            {...bulkForm.register('mrp')}
+          />
+          <Input
+            label="Cost Price (Rs.)"
+            type="number"
+            step="0.01"
+            placeholder="leave blank to keep"
+            error={bulkForm.formState.errors.costPrice?.message as string | undefined}
+            {...bulkForm.register('costPrice')}
+          />
+          <Input
+            label="Low Stock Alert (qty)"
+            type="number"
+            placeholder="leave blank to keep"
+            error={bulkForm.formState.errors.minStockAlert?.message as string | undefined}
+            {...bulkForm.register('minStockAlert')}
+          />
+          <div className="flex justify-end gap-3 pt-1">
+            <Button variant="outline" type="button" onClick={() => setModalType(null)}>Cancel</Button>
+            <Button type="submit" loading={bulkSubmitting}>
+              Apply to {selectedIds.size} book{selectedIds.size !== 1 ? 's' : ''}
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       {/* ── Add / Edit Book Modal ── */}
       <Modal
