@@ -10,9 +10,12 @@ import {
   X,
   ChevronDown,
   User,
+  Settings,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
+import { Modal } from '@/components/ui/Modal'
+import { Button } from '@/components/ui/Button'
 import type { ReactNode } from 'react'
 
 interface NavItem {
@@ -27,6 +30,7 @@ const navItems: NavItem[] = [
   { to: '/pos',      label: 'POS',      icon: <ShoppingCart className="h-5 w-5" />, roles: ['superadmin', 'admin', 'cashier'] },
   { to: '/discounts',label: 'Discounts',icon: <Tag className="h-5 w-5" />,          roles: ['superadmin', 'admin'] },
   { to: '/admin',    label: 'Analytics',icon: <BarChart2 className="h-5 w-5" />,    roles: ['superadmin'] },
+  { to: '/account',  label: 'Account',  icon: <Settings className="h-5 w-5" />,     roles: ['superadmin', 'admin', 'cashier'] },
 ]
 
 export function Layout({ children }: { children: ReactNode }) {
@@ -34,12 +38,20 @@ export function Layout({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [signOutConfirm, setSignOutConfirm] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
 
   const allowedNav = navItems.filter((n) => appUser && n.roles.includes(appUser.role))
 
   const handleSignOut = async () => {
-    await signOut()
-    navigate('/login')
+    setSigningOut(true)
+    try {
+      await signOut()
+      navigate('/login')
+    } finally {
+      setSigningOut(false)
+      setSignOutConfirm(false)
+    }
   }
 
   const roleBadge = appUser?.role === 'superadmin'
@@ -67,8 +79,8 @@ export function Layout({ children }: { children: ReactNode }) {
       >
         {/* Logo */}
         <div className="flex h-16 items-center gap-3 px-4 border-b border-gray-200">
-          <img src="/logo.jpeg" alt="Nepalaya Publication" className="h-9 w-auto object-contain" />
-          <p className="text-xs font-semibold text-gray-500 truncate">Book Central</p>
+          <img src="/logo.svg" alt="Nepalaya Publication" className="h-9 w-auto object-contain" />
+          {/* <p className="text-xs font-semibold text-gray-500 truncate">Book Central</p> */}
           <button
             className="ml-auto lg:hidden text-gray-400 hover:text-gray-600"
             onClick={() => setSidebarOpen(false)}
@@ -128,7 +140,7 @@ export function Layout({ children }: { children: ReactNode }) {
                   <span className="text-xs text-gray-500 truncate">{appUser?.email}</span>
                 </div>
                 <button
-                  onClick={handleSignOut}
+                  onClick={() => { setUserMenuOpen(false); setSignOutConfirm(true) }}
                   className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
                 >
                   <LogOut className="h-4 w-4" />
@@ -148,8 +160,8 @@ export function Layout({ children }: { children: ReactNode }) {
             <Menu className="h-6 w-6" />
           </button>
           <div className="flex items-center gap-2">
-            <img src="/logo.png" alt="Nepalaya" className="h-7 w-auto object-contain" />
-            <span className="text-xs font-semibold text-gray-500">Book Central</span>
+            <img src="/logo.svg" alt="Nepalaya" className="h-7 w-auto object-contain" />
+            {/* <span className="text-xs font-semibold text-gray-500">Book Central</span> */}
           </div>
         </header>
 
@@ -157,6 +169,26 @@ export function Layout({ children }: { children: ReactNode }) {
           {children}
         </main>
       </div>
+
+      {/* Sign-out confirmation modal */}
+      <Modal
+        open={signOutConfirm}
+        onClose={() => setSignOutConfirm(false)}
+        title="Sign Out"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">Are you sure you want to sign out?</p>
+          <div className="flex gap-3 justify-end">
+            <Button variant="outline" onClick={() => setSignOutConfirm(false)} disabled={signingOut}>
+              Cancel
+            </Button>
+            <Button variant="danger" loading={signingOut} onClick={handleSignOut}>
+              Sign Out
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

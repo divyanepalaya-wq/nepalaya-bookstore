@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   collection, onSnapshot, query, orderBy, runTransaction,
   doc, addDoc, updateDoc, getDocs, where, serverTimestamp, increment,
@@ -11,7 +11,7 @@ import {
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/contexts/AuthContext'
 import { writeAuditLog } from '@/lib/auditLog'
-import { formatCurrency, debounce, cn } from '@/lib/utils'
+import { formatCurrency, cn } from '@/lib/utils'
 import type { Book, Customer, CartItem, PaymentMethod, Discount } from '@/types'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -42,6 +42,7 @@ export default function POS() {
   const [customerPhone, setCustomerPhone] = useState('')
   const [customerName, setCustomerName] = useState('')
   const [customerId, setCustomerId] = useState<string | null>(null)
+  const [allCustomers, setAllCustomers] = useState<Customer[]>([])
   const [customerSuggestions, setCustomerSuggestions] = useState<Customer[]>([])
   const [showSuggestions, setShowSuggestions] = useState(false)
 
@@ -95,45 +96,36 @@ export default function POS() {
     return () => clearInterval(interval)
   }, [successModalOpen])
 
-  // Live discounts
+  // Load discounts once (they rarely change, no need for live listener)
   useEffect(() => {
-    const unsub = onSnapshot(
-      query(collection(db, 'discounts'), where('isActive', '==', true)),
-      (snap) => setDiscounts(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Discount))
-    )
-    return unsub
+    getDocs(query(collection(db, 'discounts'), where('isActive', '==', true)))
+      .then((snap) => setDiscounts(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Discount)))
+      .catch(() => {/* silently ignore */})
   }, [])
 
-  // Customer search — by phone prefix OR name prefix (debounced)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const searchCustomers = useCallback(
-    debounce(async (term: string) => {
-      if (term.length < 2) { setCustomerSuggestions([]); return }
-      const isPhone = /^\d/.test(term)
-      const field = isPhone ? 'phone' : 'name'
-      // Firestore range query for prefix search
-      const snap = await getDocs(
-        query(
-          collection(db, 'customers'),
-          where(field, '>=', term),
-          where(field, '<=', term + '\uf8ff')
-        )
-      )
-      setCustomerSuggestions(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Customer))
-    }, 350),
-    []
-  )
+  // Load all customers once for client-side search (far fewer Firestore reads)
+  useEffect(() => {
+    getDocs(collection(db, 'customers'))
+      .then((snap) => setAllCustomers(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Customer)))
+      .catch(() => {/* silently ignore */})
+  }, [])
 
   const [customerSearch, setCustomerSearch] = useState('')
 
   const handleCustomerSearch = (val: string) => {
     setCustomerSearch(val)
     setCustomerId(null)
-    // If it looks like a phone, mirror to phone field
     if (/^\d/.test(val)) setCustomerPhone(val)
     if (val.length >= 2) {
-      searchCustomers(val)
-      setShowSuggestions(true)
+      const term = val.toLowerCase()
+      const isPhone = /^\d/.test(val)
+      const matches = allCustomers.filter((c) =>
+        isPhone
+          ? c.phone.startsWith(val)
+          : c.name.toLowerCase().includes(term) || c.phone.startsWith(val)
+      ).slice(0, 8)
+      setCustomerSuggestions(matches)
+      setShowSuggestions(matches.length > 0)
     } else {
       setCustomerSuggestions([])
       setShowSuggestions(false)
@@ -144,8 +136,9 @@ export default function POS() {
     setCustomerPhone(val)
     setCustomerId(null)
     if (val.length >= 2) {
-      searchCustomers(val)
-      setShowSuggestions(true)
+      const matches = allCustomers.filter((c) => c.phone.startsWith(val)).slice(0, 8)
+      setCustomerSuggestions(matches)
+      setShowSuggestions(matches.length > 0)
     } else {
       setCustomerSuggestions([])
       setShowSuggestions(false)
@@ -383,6 +376,10 @@ export default function POS() {
       setCheckoutModalOpen(false)
       setSuccessModalOpen(true)
       clearCart()
+      // Refresh customer list for next search
+      getDocs(collection(db, 'customers'))
+        .then((snap) => setAllCustomers(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Customer)))
+        .catch(() => {/* silently ignore */})
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Checkout failed')
     } finally {

@@ -156,6 +156,8 @@ export type AuditAction =
   | 'discount_created'
   | 'discount_updated'
   | 'discount_deleted'
+  | 'password_changed'
+  | 'profile_updated'
 
 export interface AuditLog {
   id: string

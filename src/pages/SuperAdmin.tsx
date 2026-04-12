@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import {
-  collection, onSnapshot, query, orderBy,
+  collection, onSnapshot, getDocs, query, orderBy,
   doc, setDoc, updateDoc, serverTimestamp, limit,
 } from 'firebase/firestore'
 import { useForm } from 'react-hook-form'
@@ -80,21 +80,26 @@ export default function SuperAdmin() {
   const [voidSubmitting, setVoidSubmitting] = useState(false)
   const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
 
-  // ─── Live listeners ────────────────────────────────────────────────────────
+  // ─── Data loading ──────────────────────────────────────────────────────────
+  // Users and books use live listeners (need real-time for toggling/stock alerts)
+  // Sales and audit logs use one-time fetch to minimize Firestore reads
 
   useEffect(() => {
     const unsubs = [
       onSnapshot(query(collection(db, 'users'), orderBy('createdAt', 'desc')), (s) =>
         setUsers(s.docs.map((d) => ({ uid: d.id, ...d.data() }) as AppUser))),
-      onSnapshot(query(collection(db, 'sales'), orderBy('createdAt', 'desc'), limit(500)), (s) =>
-        setSales(s.docs.map((d) => ({ id: d.id, ...d.data() }) as Sale))),
       onSnapshot(query(collection(db, 'books'), orderBy('name')), (s) =>
         setBooks(s.docs.map((d) => ({ id: d.id, ...d.data() }) as Book))),
-      onSnapshot(query(collection(db, 'auditLogs'), orderBy('createdAt', 'desc'), limit(500)), (s) => {
-        setAuditLogs(s.docs.map((d) => ({ id: d.id, ...d.data() }) as AuditLog))
-        setLoading(false)
-      }),
     ]
+    // One-time fetch for sales and audit logs
+    Promise.all([
+      getDocs(query(collection(db, 'sales'), orderBy('createdAt', 'desc'), limit(500))),
+      getDocs(query(collection(db, 'auditLogs'), orderBy('createdAt', 'desc'), limit(500))),
+    ]).then(([salesSnap, auditSnap]) => {
+      setSales(salesSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as Sale))
+      setAuditLogs(auditSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as AuditLog))
+      setLoading(false)
+    }).catch(() => setLoading(false))
     return () => unsubs.forEach((u) => u())
   }, [])
 
@@ -141,6 +146,29 @@ export default function SuperAdmin() {
   const categoryMap: Record<string, number> = {}
   books.forEach((b) => { categoryMap[b.category] = (categoryMap[b.category] ?? 0) + 1 })
   const categoryData = Object.entries(categoryMap).map(([name, value]) => ({ name, value }))
+
+  // Payment method distribution
+  const paymentMap: Record<string, { method: string; count: number; revenue: number }> = {}
+  completedSales.forEach((s) => {
+    if (!paymentMap[s.paymentMethod]) paymentMap[s.paymentMethod] = { method: s.paymentMethod, count: 0, revenue: 0 }
+    paymentMap[s.paymentMethod].count += 1
+    paymentMap[s.paymentMethod].revenue += s.grandTotal
+  })
+  const paymentData = Object.values(paymentMap).sort((a, b) => b.revenue - a.revenue)
+
+  // Hourly sales distribution (all time)
+  const hourlyMap: Record<number, { hour: number; label: string; count: number; revenue: number }> = {}
+  for (let h = 0; h < 24; h++) hourlyMap[h] = { hour: h, label: `${h.toString().padStart(2, '0')}:00`, count: 0, revenue: 0 }
+  completedSales.forEach((s) => {
+    if (!s.createdAt) return
+    const h = s.createdAt.toDate().getHours()
+    hourlyMap[h].count += 1
+    hourlyMap[h].revenue += s.grandTotal
+  })
+  const hourlyData = Object.values(hourlyMap)
+
+  // Average order value (last 30 days)
+  const avgOrderValue = totalSalesCount > 0 ? totalRevenue / totalSalesCount : 0
 
   // ─── User management ───────────────────────────────────────────────────────
 
@@ -230,6 +258,10 @@ export default function SuperAdmin() {
         performedByName: appUser.displayName,
         role: appUser.role,
       })
+      // Update local state without re-fetching
+      setSales((prev) => prev.map((s) =>
+        s.id === voidModal.id ? { ...s, status: 'voided', voidReason: voidReason.trim() } : s
+      ))
       toast.success('Sale voided')
       setVoidModal(null)
       setVoidReason('')
@@ -359,16 +391,16 @@ export default function SuperAdmin() {
               color="blue"
             />
             <StatCard
-              title="Total Books"
-              value={books.length}
-              subtitle={`${lowStockBooks.length} low stock`}
-              icon={<BookOpen className="h-5 w-5" />}
+              title="Avg Order Value"
+              value={formatCurrency(avgOrderValue)}
+              subtitle="Per completed sale"
+              icon={<ShoppingBag className="h-5 w-5" />}
               color="orange"
             />
             <StatCard
               title="Low Stock Alert"
               value={lowStockBooks.length}
-              subtitle="Need restocking"
+              subtitle={lowStockBooks.length > 0 ? 'Need restocking' : 'All good'}
               icon={<AlertTriangle className="h-5 w-5" />}
               color={lowStockBooks.length > 0 ? 'red' : 'green'}
             />
@@ -471,6 +503,52 @@ export default function SuperAdmin() {
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
+              )}
+            </div>
+          </div>
+
+          {/* Hourly Sales + Payment Methods */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="rounded-xl border border-gray-200 bg-white p-5">
+              <h2 className="text-sm font-semibold text-gray-700 mb-4">Sales by Hour of Day</h2>
+              {completedSales.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-8">No sales data yet</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={hourlyData} margin={{ top: 0, right: 4, bottom: 0, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                    <XAxis dataKey="label" tick={{ fontSize: 9 }} tickLine={false} interval={2} />
+                    <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />
+                    <Tooltip
+                      formatter={(v: number, name: string) =>
+                        name === 'count' ? [v, 'Sales'] : [formatCurrency(v as number), 'Revenue']
+                      }
+                    />
+                    <Bar dataKey="count" fill="#f79e0a" radius={[3, 3, 0, 0]} name="count" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-gray-200 bg-white p-5">
+              <h2 className="text-sm font-semibold text-gray-700 mb-4">Revenue by Payment Method</h2>
+              {paymentData.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-8">No sales data yet</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={paymentData} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f0f0f0" />
+                    <XAxis type="number" tick={{ fontSize: 11 }} tickLine={false}
+                      tickFormatter={(v) => `Rs.${(v / 1000).toFixed(0)}k`} />
+                    <YAxis type="category" dataKey="method" tick={{ fontSize: 11 }} tickLine={false} width={90} />
+                    <Tooltip formatter={(v: number) => [formatCurrency(v), 'Revenue']} />
+                    <Bar dataKey="revenue" radius={[0, 4, 4, 0]}>
+                      {paymentData.map((_, i) => (
+                        <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               )}
             </div>
           </div>

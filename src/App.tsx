@@ -9,6 +9,7 @@ import Stock from '@/pages/Stock'
 import POS from '@/pages/POS'
 import Discounts from '@/pages/Discounts'
 import SuperAdmin from '@/pages/SuperAdmin'
+import AccountSettings from '@/pages/AccountSettings'
 
 function App() {
   return (
@@ -67,6 +68,17 @@ function App() {
               <ProtectedRoute allowedRoles={['superadmin']}>
                 <Layout>
                   <SuperAdmin />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/account"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <AccountSettings />
                 </Layout>
               </ProtectedRoute>
             }
