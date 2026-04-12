@@ -3,6 +3,7 @@ import {
   collection, onSnapshot, getDocs, query, orderBy,
   doc, setDoc, updateDoc, serverTimestamp, limit,
 } from 'firebase/firestore'
+
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -19,9 +20,10 @@ import {
 import { format, subDays } from 'date-fns'
 import { db, createUserViaRest } from '@/lib/firebase'
 import { useAuth } from '@/contexts/AuthContext'
+import { useBooks } from '@/contexts/BooksContext'
 import { writeAuditLog } from '@/lib/auditLog'
 import { formatCurrency, formatDateTime } from '@/lib/utils'
-import type { AppUser, Sale, Book, AuditLog, UserRole } from '@/types'
+import type { AppUser, Sale, AuditLog, UserRole } from '@/types'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
@@ -59,12 +61,12 @@ const CHART_COLORS = ['#f79e0a', '#3b82f6', '#10b981', '#ef4444', '#8b5cf6']
 
 export default function SuperAdmin() {
   const { appUser } = useAuth()
+  const { books } = useBooks()
   const [activeTab, setActiveTab] = useState<Tab>('analytics')
 
   // ─── Data ──────────────────────────────────────────────────────────────────
   const [users, setUsers]     = useState<AppUser[]>([])
   const [sales, setSales]     = useState<Sale[]>([])
-  const [books, setBooks]     = useState<Book[]>([])
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -88,8 +90,6 @@ export default function SuperAdmin() {
     const unsubs = [
       onSnapshot(query(collection(db, 'users'), orderBy('createdAt', 'desc')), (s) =>
         setUsers(s.docs.map((d) => ({ uid: d.id, ...d.data() }) as AppUser))),
-      onSnapshot(query(collection(db, 'books'), orderBy('name')), (s) =>
-        setBooks(s.docs.map((d) => ({ id: d.id, ...d.data() }) as Book))),
     ]
     // One-time fetch for sales and audit logs
     Promise.all([

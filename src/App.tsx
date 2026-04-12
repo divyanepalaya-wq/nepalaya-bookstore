@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import { AuthProvider } from '@/contexts/AuthContext'
+import { BooksProvider } from '@/contexts/BooksContext'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { Layout } from '@/components/Layout'
 import Login from '@/pages/Login'
@@ -15,6 +16,7 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <BooksProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
 
@@ -87,6 +89,7 @@ function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
 
+        </BooksProvider>
         <Toaster
           position="top-right"
           toastOptions={{

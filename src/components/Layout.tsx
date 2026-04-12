@@ -79,7 +79,7 @@ export function Layout({ children }: { children: ReactNode }) {
       >
         {/* Logo */}
         <div className="flex h-16 items-center gap-3 px-4 border-b border-gray-200">
-          <img src="/logo.svg" alt="Nepalaya Publication" className="h-9 w-auto object-contain" />
+          <img src="/logo.svg" alt="Nepalaya Publication" className="h-14 w-auto object-contain" />
           {/* <p className="text-xs font-semibold text-gray-500 truncate">Book Central</p> */}
           <button
             className="ml-auto lg:hidden text-gray-400 hover:text-gray-600"
@@ -160,7 +160,7 @@ export function Layout({ children }: { children: ReactNode }) {
             <Menu className="h-6 w-6" />
           </button>
           <div className="flex items-center gap-2">
-            <img src="/logo.svg" alt="Nepalaya" className="h-7 w-auto object-contain" />
+            <img src="/logo.svg" alt="Nepalaya" className="h-14 w-auto object-contain" />
             {/* <span className="text-xs font-semibold text-gray-500">Book Central</span> */}
           </div>
         </header>

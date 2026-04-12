@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -19,21 +20,24 @@ const sizeClasses = {
 
 export function Modal({ open, onClose, title, children, size = 'md' }: ModalProps) {
   useEffect(() => {
-    if (open) {
-      document.body.style.overflow = 'hidden'
-    } else {
+    if (!open) return
+    document.body.style.overflow = 'hidden'
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => {
       document.body.style.overflow = ''
+      window.removeEventListener('keydown', onKey)
     }
-    return () => { document.body.style.overflow = '' }
-  }, [open])
+  }, [open, onClose])
 
   if (!open) return null
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4"
       onClick={onClose}
     >
+      {/* Backdrop — rendered as sibling so it always covers full viewport */}
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
       <div
         className={cn(
@@ -47,6 +51,7 @@ export function Modal({ open, onClose, title, children, size = 'md' }: ModalProp
           <button
             onClick={onClose}
             className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+            aria-label="Close"
           >
             <X className="h-5 w-5" />
           </button>
@@ -55,6 +60,7 @@ export function Modal({ open, onClose, title, children, size = 'md' }: ModalProp
           {children}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

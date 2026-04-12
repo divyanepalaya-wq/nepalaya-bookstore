@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  collection, onSnapshot, doc, addDoc, updateDoc, writeBatch,
+  collection, doc, addDoc, updateDoc, writeBatch,
   runTransaction, serverTimestamp, query, orderBy, where, getDocs,
 } from 'firebase/firestore'
 import { useForm } from 'react-hook-form'
@@ -15,6 +15,7 @@ import {
 import * as XLSX from 'xlsx'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/contexts/AuthContext'
+import { useBooks } from '@/contexts/BooksContext'
 import { writeAuditLog } from '@/lib/auditLog'
 import { formatCurrency, formatDateTime, cn } from '@/lib/utils'
 import { downloadCSV } from '@/lib/csvUtils'
@@ -66,7 +67,7 @@ const CATEGORY_OPTIONS: { value: BookCategory; label: string }[] = [
   { value: 'other',       label: 'Other' },
 ]
 
-type ModalType = null | 'add' | 'edit' | 'stockIn' | 'stockOut' | 'history' | 'import' | 'bulkEdit'
+type ModalType = null | 'add' | 'edit' | 'stockIn' | 'stockOut' | 'history' | 'import' | 'bulkEdit' | 'bulkDelete'
 
 // ─── Bulk edit schema ──────────────────────────────────────────────────────────
 
@@ -101,8 +102,7 @@ interface ImportRow {
 
 export default function Stock() {
   const { appUser } = useAuth()
-  const [books, setBooks] = useState<Book[]>([])
-  const [loadingBooks, setLoadingBooks] = useState(true)
+  const { books, loading: loadingBooks } = useBooks()
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
   const [modalType, setModalType] = useState<ModalType>(null)
@@ -114,21 +114,32 @@ export default function Stock() {
   const [importing, setImporting] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkSubmitting, setBulkSubmitting] = useState(false)
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [bulkDeleting, setBulkDeleting] = useState(false)
+  const searchRef = useRef<HTMLInputElement>(null)
 
-  // Live books listener
+  // ─── Keyboard shortcuts ────────────────────────────────────────────────────
   useEffect(() => {
-    const unsub = onSnapshot(
-      query(collection(db, 'books'), orderBy('name')),
-      (snap) => {
-        setBooks(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Book))
-        setLoadingBooks(false)
-      },
-      () => setLoadingBooks(false)
-    )
-    return unsub
-  }, [])
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName
+      const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+      if (e.key === '/' && !inInput) {
+        e.preventDefault()
+        searchRef.current?.focus()
+      }
+      if (e.key === 'n' && !inInput && !modalType) {
+        openAdd()
+      }
+      if (e.key === 'e' && !inInput && !modalType) {
+        exportBooks()
+      }
+      if (e.key === 'Escape' && selectedIds.size > 0 && !modalType) {
+        setSelectedIds(new Set())
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalType, selectedIds.size])
 
   // ─── Book Form ─────────────────────────────────────────────────────────────
 
@@ -470,7 +481,6 @@ export default function Stock() {
       })
       toast.success(`${ids.length} book${ids.length !== 1 ? 's' : ''} deleted`)
       setSelectedIds(new Set())
-      setDeleteConfirmOpen(false)
     } catch {
       toast.error('Delete failed')
     } finally {
@@ -496,7 +506,6 @@ export default function Stock() {
   // ─── Filtered books ────────────────────────────────────────────────────────
 
   const filtered = books.filter((b) => {
-    if (b.isDeleted) return false
     const q = search.toLowerCase()
     const matchSearch = !q || b.name.toLowerCase().includes(q) || b.author.toLowerCase().includes(q) || (b.isbn ?? '').includes(q)
     const matchCat = !categoryFilter || b.category === categoryFilter
@@ -520,7 +529,7 @@ export default function Stock() {
             onClick={exportBooks}
             className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
           >
-            <FileDown className="h-4 w-4" /> Export
+            <FileDown className="h-4 w-4" /> Export <kbd className="ml-0.5 rounded border border-gray-200 bg-gray-50 px-1 py-0.5 text-xs font-mono text-gray-400">E</kbd>
           </button>
           <button
             onClick={downloadTemplate}
@@ -538,7 +547,7 @@ export default function Stock() {
             />
           </label>
           <Button onClick={openAdd}>
-            <Plus className="h-4 w-4" /> Add Book
+            <Plus className="h-4 w-4" /> Add Book <kbd className="ml-0.5 rounded border border-brand-300 bg-brand-600/20 px-1 py-0.5 text-xs font-mono text-brand-100">N</kbd>
           </Button>
         </div>
       </div>
@@ -548,11 +557,13 @@ export default function Stock() {
         <div className="relative flex-1">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
           <input
+            ref={searchRef}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by name, author, ISBN…"
-            className="w-full rounded-lg border border-gray-300 bg-white pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="w-full rounded-lg border border-gray-300 bg-white pl-9 pr-14 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
+          <kbd className="absolute right-3 top-2 rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-xs text-gray-400 font-mono pointer-events-none">/</kbd>
         </div>
         <select
           value={categoryFilter}
@@ -578,38 +589,20 @@ export default function Stock() {
       {selectedIds.size > 0 && (
         <div className="flex items-center gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-2.5 flex-wrap">
           <span className="text-sm font-semibold text-brand-700">{selectedIds.size} selected</span>
-          <Button
-            size="sm"
-            onClick={() => { bulkForm.reset(); setModalType('bulkEdit') }}
-          >
+          <Button size="sm" onClick={() => { bulkForm.reset(); setModalType('bulkEdit') }}>
             <ListChecks className="h-4 w-4" /> Bulk Edit
           </Button>
-          {deleteConfirmOpen ? (
-            <span className="flex items-center gap-2 text-sm">
-              <span className="text-red-600 font-medium">Delete {selectedIds.size} book{selectedIds.size !== 1 ? 's' : ''}?</span>
-              <button
-                onClick={bulkSoftDelete}
-                disabled={bulkDeleting}
-                className="font-semibold text-red-600 hover:text-red-800 disabled:opacity-50"
-              >
-                {bulkDeleting ? 'Deleting…' : 'Yes, delete'}
-              </button>
-              <span className="text-gray-300">·</span>
-              <button onClick={() => setDeleteConfirmOpen(false)} className="text-gray-500 hover:text-gray-700">Cancel</button>
-            </span>
-          ) : (
-            <button
-              onClick={() => setDeleteConfirmOpen(true)}
-              className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
-            >
-              <Trash2 className="h-3.5 w-3.5" /> Delete
-            </button>
-          )}
           <button
-            onClick={() => { setSelectedIds(new Set()); setDeleteConfirmOpen(false) }}
+            onClick={() => setModalType('bulkDelete')}
+            className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
+          >
+            <Trash2 className="h-3.5 w-3.5" /> Delete
+          </button>
+          <button
+            onClick={() => setSelectedIds(new Set())}
             className="ml-auto flex items-center gap-1 text-sm text-brand-600 hover:text-brand-800"
           >
-            <X className="h-4 w-4" /> Clear selection
+            <X className="h-4 w-4" /> Clear <kbd className="ml-1 rounded bg-brand-100 px-1 py-0.5 text-xs font-mono">Esc</kbd>
           </button>
         </div>
       )}
@@ -775,6 +768,43 @@ export default function Stock() {
             </Button>
           </div>
         </form>
+      </Modal>
+
+      {/* ── Bulk Delete Confirm Modal ── */}
+      <Modal
+        open={modalType === 'bulkDelete'}
+        onClose={() => setModalType(null)}
+        title="Delete Books"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 rounded-lg bg-red-50 border border-red-200 p-4">
+            <Trash2 className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-red-800">
+                Delete {selectedIds.size} book{selectedIds.size !== 1 ? 's' : ''}?
+              </p>
+              <p className="text-sm text-red-700 mt-1">
+                These books will be hidden from stock and POS. This is a soft delete — records are retained in the database and can be restored by an administrator if needed.
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-3 justify-end">
+            <Button variant="outline" onClick={() => setModalType(null)} disabled={bulkDeleting}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              loading={bulkDeleting}
+              onClick={async () => {
+                await bulkSoftDelete()
+                setModalType(null)
+              }}
+            >
+              <Trash2 className="h-4 w-4" /> Delete {selectedIds.size} book{selectedIds.size !== 1 ? 's' : ''}
+            </Button>
+          </div>
+        </div>
       </Modal>
 
       {/* ── Add / Edit Book Modal ── */}

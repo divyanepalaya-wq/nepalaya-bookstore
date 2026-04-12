@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import {
-  collection, onSnapshot, query, orderBy, runTransaction,
+  collection, query, runTransaction,
   doc, addDoc, updateDoc, getDocs, where, serverTimestamp, increment,
 } from 'firebase/firestore'
 import toast from 'react-hot-toast'
@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/contexts/AuthContext'
+import { useBooks } from '@/contexts/BooksContext'
 import { writeAuditLog } from '@/lib/auditLog'
 import { formatCurrency, cn } from '@/lib/utils'
 import type { Book, Customer, CartItem, PaymentMethod, Discount } from '@/types'
@@ -29,9 +30,9 @@ const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
 
 export default function POS() {
   const { appUser } = useAuth()
+  const { books } = useBooks()
 
   // Books
-  const [books, setBooks] = useState<Book[]>([])
   const [bookSearch, setBookSearch] = useState('')
 
   // Cart
@@ -65,23 +66,14 @@ export default function POS() {
 
   const phoneRef = useRef<HTMLInputElement>(null)
 
-  // Live books — also sync maxStock on existing cart items
+  // Sync cart maxStock whenever live books update (BooksContext keeps books fresh)
   useEffect(() => {
-    const unsub = onSnapshot(
-      query(collection(db, 'books'), orderBy('name')),
-      (snap) => {
-        const updated = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Book)
-        setBooks(updated)
-        // Keep cart maxStock in sync so we never allow overbooking
-        setCart((prev) => prev.map((item) => {
-          const live = updated.find((b) => b.id === item.bookId)
-          if (!live) return item
-          return { ...item, maxStock: live.inStock, quantity: Math.min(item.quantity, live.inStock) }
-        }))
-      }
-    )
-    return unsub
-  }, [])
+    setCart((prev) => prev.map((item) => {
+      const live = books.find((b) => b.id === item.bookId)
+      if (!live) return item
+      return { ...item, maxStock: live.inStock, quantity: Math.min(item.quantity, live.inStock) }
+    }))
+  }, [books])
 
   // Auto-close success modal with countdown
   useEffect(() => {
