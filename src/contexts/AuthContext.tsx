@@ -75,18 +75,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAppUser(null)
   }
 
-  // Expose a one-time setup helper accessible from the browser console for first-run
+  // Dev-only one-time setup helper — stripped in production builds
   useEffect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(window as any).__setupSuperAdmin = async (uid: string, email: string, name: string) => {
-      await setDoc(doc(db, 'users', uid), {
-        email,
-        displayName: name,
-        role: 'superadmin',
-        isActive: true,
-        createdAt: serverTimestamp(),
-      })
-      console.log('Superadmin profile created for', uid)
+    if (import.meta.env.DEV) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(window as any).__setupSuperAdmin = async (uid: string, email: string, name: string) => {
+        await setDoc(doc(db, 'users', uid), {
+          email,
+          displayName: name,
+          role: 'superadmin',
+          isActive: true,
+          createdAt: serverTimestamp(),
+        })
+        console.info('[Dev] Superadmin profile created for', uid)
+      }
     }
   }, [])
 

@@ -129,8 +129,12 @@ export default function Discounts() {
 
   const toggleActive = async (d: Discount) => {
     if (!appUser) return
-    await updateDoc(doc(db, 'discounts', d.id), { isActive: !d.isActive })
-    toast.success(d.isActive ? 'Discount deactivated' : 'Discount activated')
+    try {
+      await updateDoc(doc(db, 'discounts', d.id), { isActive: !d.isActive })
+      toast.success(d.isActive ? 'Discount deactivated' : 'Discount activated')
+    } catch {
+      toast.error('Failed to update discount')
+    }
   }
 
   const remove = async () => {

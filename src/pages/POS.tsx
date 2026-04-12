@@ -57,19 +57,43 @@ export default function POS() {
   // UI state
   const [checkoutModalOpen, setCheckoutModalOpen] = useState(false)
   const [successModalOpen, setSuccessModalOpen] = useState(false)
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [lastSaleId, setLastSaleId] = useState('')
+  const [successCountdown, setSuccessCountdown] = useState(4)
 
   const phoneRef = useRef<HTMLInputElement>(null)
 
-  // Live books
+  // Live books — also sync maxStock on existing cart items
   useEffect(() => {
     const unsub = onSnapshot(
       query(collection(db, 'books'), orderBy('name')),
-      (snap) => setBooks(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Book))
+      (snap) => {
+        const updated = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Book)
+        setBooks(updated)
+        // Keep cart maxStock in sync so we never allow overbooking
+        setCart((prev) => prev.map((item) => {
+          const live = updated.find((b) => b.id === item.bookId)
+          if (!live) return item
+          return { ...item, maxStock: live.inStock, quantity: Math.min(item.quantity, live.inStock) }
+        }))
+      }
     )
     return unsub
   }, [])
+
+  // Auto-close success modal with countdown
+  useEffect(() => {
+    if (!successModalOpen) return
+    setSuccessCountdown(4)
+    const interval = setInterval(() => {
+      setSuccessCountdown((n) => {
+        if (n <= 1) { clearInterval(interval); setSuccessModalOpen(false); return 0 }
+        return n - 1
+      })
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [successModalOpen])
 
   // Live discounts
   useEffect(() => {
@@ -207,8 +231,16 @@ export default function POS() {
   const applyDiscount = (d: Discount) => {
     if (d.scope === 'order') {
       if (d.type === 'percentage') {
-        setOrderDiscountPercent(d.value)
-        toast.success(`Applied ${d.name} (${d.value}% off)`)
+        const clamped = Math.min(100, Math.max(0, d.value))
+        setOrderDiscountPercent(clamped)
+        toast.success(`Applied "${d.name}" — ${clamped}% off`)
+      } else {
+        // Fixed amount: convert to % of current subtotal for order-level
+        if (subtotalBeforeDiscount > 0) {
+          const pct = Math.min(100, (d.value / subtotalBeforeDiscount) * 100)
+          setOrderDiscountPercent(parseFloat(pct.toFixed(2)))
+          toast.success(`Applied "${d.name}" — ${formatCurrency(d.value)} off`)
+        }
       }
     }
     setShowDiscountPicker(false)
@@ -505,9 +537,18 @@ export default function POS() {
               )}
             </h2>
             {cart.length > 0 && (
-              <button onClick={clearCart} className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1">
-                <X className="h-3.5 w-3.5" /> Clear
-              </button>
+              clearConfirmOpen ? (
+                <span className="flex items-center gap-1 text-xs">
+                  <span className="text-gray-500">Clear cart?</span>
+                  <button onClick={() => { clearCart(); setClearConfirmOpen(false) }} className="text-red-600 font-semibold hover:underline">Yes</button>
+                  <span className="text-gray-300">·</span>
+                  <button onClick={() => setClearConfirmOpen(false)} className="text-gray-500 hover:underline">No</button>
+                </span>
+              ) : (
+                <button onClick={() => setClearConfirmOpen(true)} className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1">
+                  <X className="h-3.5 w-3.5" /> Clear
+                </button>
+              )
             )}
           </div>
 
@@ -572,7 +613,7 @@ export default function POS() {
                   min={0}
                   max={100}
                   value={orderDiscountPercent}
-                  onChange={(e) => setOrderDiscountPercent(parseFloat(e.target.value) || 0)}
+                  onChange={(e) => setOrderDiscountPercent(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
                   className="w-14 rounded border border-gray-200 px-1.5 py-0.5 text-xs text-center focus:outline-none focus:ring-1 focus:ring-brand-400"
                 />
                 <span className="text-xs text-gray-500">%</span>
@@ -752,7 +793,7 @@ export default function POS() {
           <p className="text-lg font-semibold text-gray-900">Sale recorded!</p>
           <p className="text-sm text-gray-500">Sale ID: <span className="font-mono text-xs">{lastSaleId.slice(-8)}</span></p>
           <Button className="w-full" onClick={() => setSuccessModalOpen(false)}>
-            New Sale
+            New Sale ({successCountdown}s)
           </Button>
         </div>
       </Modal>

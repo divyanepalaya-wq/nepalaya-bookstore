@@ -77,6 +77,8 @@ export default function SuperAdmin() {
   const [submittingUser, setSubmittingUser] = useState(false)
   const [voidModal, setVoidModal] = useState<Sale | null>(null)
   const [voidReason, setVoidReason] = useState('')
+  const [voidSubmitting, setVoidSubmitting] = useState(false)
+  const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
 
   // ─── Live listeners ────────────────────────────────────────────────────────
 
@@ -182,44 +184,60 @@ export default function SuperAdmin() {
   const toggleUserActive = async (u: AppUser) => {
     if (!appUser) return
     if (u.uid === appUser.uid) { toast.error("You can't deactivate yourself"); return }
-    await updateDoc(doc(db, 'users', u.uid), { isActive: !u.isActive })
-    await writeAuditLog({
-      action: 'user_updated',
-      entity: 'user',
-      entityId: u.uid,
-      details: `${u.isActive ? 'Deactivated' : 'Activated'} user "${u.displayName}"`,
-      performedBy: appUser.uid,
-      performedByName: appUser.displayName,
-      role: appUser.role,
-    })
-    toast.success(u.isActive ? 'User deactivated' : 'User activated')
+    if (togglingUserId) return   // prevent double-click
+    setTogglingUserId(u.uid)
+    try {
+      await updateDoc(doc(db, 'users', u.uid), { isActive: !u.isActive })
+      await writeAuditLog({
+        action: 'user_updated',
+        entity: 'user',
+        entityId: u.uid,
+        details: `${u.isActive ? 'Deactivated' : 'Activated'} user "${u.displayName}"`,
+        performedBy: appUser.uid,
+        performedByName: appUser.displayName,
+        role: appUser.role,
+      })
+      toast.success(u.isActive ? 'User deactivated' : 'User activated')
+    } catch {
+      toast.error('Failed to update user status')
+    } finally {
+      setTogglingUserId(null)
+    }
   }
 
   // ─── Void sale ─────────────────────────────────────────────────────────────
 
   const voidSale = async () => {
-    if (!voidModal || !appUser || !voidReason.trim()) {
-      toast.error('Void reason required')
+    if (!voidModal || !appUser) return
+    if (voidReason.trim().length < 3) {
+      toast.error('Please enter a reason (at least 3 characters)')
       return
     }
-    await updateDoc(doc(db, 'sales', voidModal.id), {
-      status: 'voided',
-      voidReason,
-      voidedBy: appUser.uid,
-      voidedAt: serverTimestamp(),
-    })
-    await writeAuditLog({
-      action: 'sale_voided',
-      entity: 'sale',
-      entityId: voidModal.id,
-      details: `Voided sale ${voidModal.id.slice(-8)} — ${voidReason}`,
-      performedBy: appUser.uid,
-      performedByName: appUser.displayName,
-      role: appUser.role,
-    })
-    toast.success('Sale voided')
-    setVoidModal(null)
-    setVoidReason('')
+    setVoidSubmitting(true)
+    try {
+      await updateDoc(doc(db, 'sales', voidModal.id), {
+        status: 'voided',
+        voidReason: voidReason.trim(),
+        voidedBy: appUser.uid,
+        voidedAt: serverTimestamp(),
+      })
+      await writeAuditLog({
+        action: 'sale_voided',
+        entity: 'sale',
+        entityId: voidModal.id,
+        details: `Voided sale ${voidModal.id.slice(-8)} — ${voidReason.trim()}`,
+        performedBy: appUser.uid,
+        performedByName: appUser.displayName,
+        role: appUser.role,
+      })
+      toast.success('Sale voided')
+      setVoidModal(null)
+      setVoidReason('')
+    } catch {
+      toast.error('Failed to void sale')
+    } finally {
+      setVoidSubmitting(false)
+    }
   }
 
   // ─── CSV exports ───────────────────────────────────────────────────────────
@@ -538,11 +556,13 @@ export default function SuperAdmin() {
                     <td className="px-4 py-3">
                       <button
                         onClick={() => toggleUserActive(u)}
-                        disabled={u.uid === appUser?.uid}
-                        title={u.isActive ? 'Deactivate' : 'Activate'}
+                        disabled={u.uid === appUser?.uid || togglingUserId === u.uid}
+                        title={u.isActive ? 'Deactivate user' : 'Activate user'}
                         className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 disabled:opacity-30 transition-colors"
                       >
-                        {u.isActive
+                        {togglingUserId === u.uid
+                          ? <span className="h-4 w-4 inline-block animate-spin border-2 border-gray-300 border-t-gray-600 rounded-full" />
+                          : u.isActive
                           ? <UserX className="h-4 w-4 text-red-500" />
                           : <UserCheck className="h-4 w-4 text-green-500" />}
                       </button>
@@ -631,21 +651,24 @@ export default function SuperAdmin() {
             </table>
           </div>
 
-          <Modal open={!!voidModal} onClose={() => setVoidModal(null)} title="Void Sale" size="sm">
+          <Modal open={!!voidModal} onClose={() => { if (!voidSubmitting) { setVoidModal(null); setVoidReason('') } }} title="Void Sale" size="sm">
             <div className="space-y-4">
-              <p className="text-sm text-gray-600">
-                Void sale <span className="font-mono font-semibold">{voidModal?.id.slice(-8)}</span> —{' '}
-                {voidModal && formatCurrency(voidModal.grandTotal)} for <span className="font-semibold">{voidModal?.customerName}</span>?
-              </p>
+              <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-800">
+                <p className="font-semibold">This action cannot be undone.</p>
+                <p className="mt-0.5">
+                  Sale <span className="font-mono font-semibold">{voidModal?.id.slice(-8)}</span> · {voidModal && formatCurrency(voidModal.grandTotal)} · {voidModal?.customerName}
+                </p>
+              </div>
               <Input
-                label="Void Reason *"
+                label="Void Reason * (min. 3 characters)"
                 value={voidReason}
                 onChange={(e) => setVoidReason(e.target.value)}
-                placeholder="Reason for voiding this sale"
+                placeholder="e.g. Customer returned items, duplicate entry…"
+                error={voidReason.length > 0 && voidReason.trim().length < 3 ? 'Too short' : undefined}
               />
               <div className="flex gap-3 justify-end">
-                <Button variant="outline" onClick={() => setVoidModal(null)}>Cancel</Button>
-                <Button variant="danger" onClick={voidSale}>Void Sale</Button>
+                <Button variant="outline" disabled={voidSubmitting} onClick={() => { setVoidModal(null); setVoidReason('') }}>Cancel</Button>
+                <Button variant="danger" loading={voidSubmitting} onClick={voidSale}>Confirm Void</Button>
               </div>
             </div>
           </Modal>

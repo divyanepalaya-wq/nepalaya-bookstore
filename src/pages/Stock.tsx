@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
-  collection, onSnapshot, doc, addDoc, updateDoc,
+  collection, onSnapshot, doc, addDoc, updateDoc, writeBatch,
   runTransaction, serverTimestamp, query, orderBy, where, getDocs,
 } from 'firebase/firestore'
 import { useForm } from 'react-hook-form'
@@ -40,6 +40,9 @@ const bookSchema = z.object({
   inStock: z.coerce.number().int().min(0, 'Cannot be negative'),
   minStockAlert: z.coerce.number().int().min(0).default(5),
   description: z.string().optional(),
+}).refine((d) => d.costPrice <= d.mrp, {
+  message: 'Cost price cannot exceed MRP',
+  path: ['costPrice'],
 })
 type BookFormData = z.infer<typeof bookSchema>
 
@@ -314,40 +317,46 @@ export default function Stock() {
     const validRows = importRows.filter((r) => r._valid)
     if (validRows.length === 0) { toast.error('No valid rows to import'); return }
     setImporting(true)
-    let count = 0
     try {
-      for (const row of validRows) {
-        const ref = await addDoc(collection(db, 'books'), {
-          name: row.name,
-          author: row.author,
-          isbn: row.isbn ?? '',
-          category: row.category,
-          publisher: row.publisher ?? '',
-          mrp: row.mrp,
-          costPrice: row.costPrice,
-          inStock: row.inStock,
-          minStockAlert: row.minStockAlert,
-          description: row.description ?? '',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-          createdBy: appUser.uid,
+      // Firestore batch max is 500 writes — chunk if needed
+      const BATCH_SIZE = 490
+      for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
+        const chunk = validRows.slice(i, i + BATCH_SIZE)
+        const batch = writeBatch(db)
+        chunk.forEach((row) => {
+          const ref = doc(collection(db, 'books'))
+          batch.set(ref, {
+            name: row.name,
+            author: row.author,
+            isbn: row.isbn ?? '',
+            category: row.category,
+            publisher: row.publisher ?? '',
+            mrp: row.mrp,
+            costPrice: row.costPrice,
+            inStock: row.inStock,
+            minStockAlert: row.minStockAlert,
+            description: row.description ?? '',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            createdBy: appUser.uid,
+          })
         })
-        await writeAuditLog({
-          action: 'book_created',
-          entity: 'book',
-          entityId: ref.id,
-          details: `Imported book "${row.name}" via CSV/Excel`,
-          performedBy: appUser.uid,
-          performedByName: appUser.displayName,
-          role: appUser.role,
-        })
-        count++
+        await batch.commit()
       }
-      toast.success(`Imported ${count} book${count !== 1 ? 's' : ''} successfully`)
+      // Single audit log summarising the whole import
+      await writeAuditLog({
+        action: 'book_created',
+        entity: 'book',
+        details: `Bulk imported ${validRows.length} book${validRows.length !== 1 ? 's' : ''} via CSV/Excel`,
+        performedBy: appUser.uid,
+        performedByName: appUser.displayName,
+        role: appUser.role,
+      })
+      toast.success(`Imported ${validRows.length} book${validRows.length !== 1 ? 's' : ''} successfully`)
       setModalType(null)
       setImportRows([])
     } catch {
-      toast.error('Import failed partway. Check your data and try again.')
+      toast.error('Import failed. Please check your data and try again.')
     } finally {
       setImporting(false)
     }
