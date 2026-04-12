@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis,
-  CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
+  CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts'
 import { format, subDays } from 'date-fns'
 import { db, createUserViaRest } from '@/lib/firebase'
@@ -407,39 +407,52 @@ export default function SuperAdmin() {
               )}
             </div>
 
-            <div className="rounded-xl border border-gray-200 bg-white p-5">
-              <h2 className="text-sm font-semibold text-gray-700 mb-4">Books by Category</h2>
+            <div className="rounded-xl border border-gray-200 bg-white p-5 flex flex-col">
+              <h2 className="text-sm font-semibold text-gray-700 mb-3">Books by Category</h2>
               {categoryData.length === 0 ? (
                 <p className="text-sm text-gray-400 text-center py-8">No books added yet</p>
               ) : (
-                <ResponsiveContainer width="100%" height={220}>
-                  <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-                    <Pie
-                      data={categoryData}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="40%"
-                      cy="50%"
-                      outerRadius={75}
-                      innerRadius={32}
-                    >
-                      {categoryData.map((_, i) => (
-                        <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Legend
+                /* Dynamic height: 28px per bar, min 180, max 320, then scroll */
+                <div className="overflow-y-auto" style={{ maxHeight: 280 }}>
+                  <ResponsiveContainer
+                    width="100%"
+                    height={Math.max(180, categoryData.length * 28)}
+                  >
+                    <BarChart
+                      data={[...categoryData].sort((a, b) => b.value - a.value)}
                       layout="vertical"
-                      align="right"
-                      verticalAlign="middle"
-                      iconType="circle"
-                      iconSize={8}
-                      formatter={(value) => (
-                        <span style={{ fontSize: 11, color: '#6b7280' }}>{value}</span>
-                      )}
-                    />
-                    <Tooltip formatter={(v: number, name: string) => [v, name]} />
-                  </PieChart>
-                </ResponsiveContainer>
+                      margin={{ top: 0, right: 30, bottom: 0, left: 4 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f3f4f6" />
+                      <XAxis
+                        type="number"
+                        allowDecimals={false}
+                        tick={{ fontSize: 10 }}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <YAxis
+                        type="category"
+                        dataKey="name"
+                        tick={{ fontSize: 11 }}
+                        tickLine={false}
+                        axisLine={false}
+                        width={100}
+                      />
+                      <Tooltip
+                        formatter={(v: number) => [v, 'Books']}
+                        cursor={{ fill: '#fef3e2' }}
+                      />
+                      <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={18}>
+                        {[...categoryData]
+                          .sort((a, b) => b.value - a.value)
+                          .map((_, i) => (
+                            <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                          ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               )}
             </div>
           </div>
