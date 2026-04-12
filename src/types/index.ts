@@ -43,6 +43,9 @@ export interface Book {
   createdAt: Timestamp
   updatedAt: Timestamp
   createdBy: string
+  isDeleted?: boolean
+  deletedAt?: Timestamp
+  deletedBy?: string
 }
 
 // ─── Stock Transaction ────────────────────────────────────────────────────────

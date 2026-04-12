@@ -10,7 +10,7 @@ import toast from 'react-hot-toast'
 import {
   Plus, Search, ArrowDownCircle, ArrowUpCircle, History,
   Package, AlertTriangle, Pencil, TrendingUp, TrendingDown,
-  Upload, Download, FileSpreadsheet, ListChecks, FileDown, X,
+  Upload, Download, FileSpreadsheet, ListChecks, FileDown, X, Trash2,
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { db } from '@/lib/firebase'
@@ -114,6 +114,8 @@ export default function Stock() {
   const [importing, setImporting] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkSubmitting, setBulkSubmitting] = useState(false)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [bulkDeleting, setBulkDeleting] = useState(false)
 
   // Live books listener
   useEffect(() => {
@@ -439,6 +441,43 @@ export default function Stock() {
     }
   }
 
+  // ─── Bulk soft-delete ─────────────────────────────────────────────────────
+
+  const bulkSoftDelete = async () => {
+    if (!appUser || selectedIds.size === 0) return
+    setBulkDeleting(true)
+    try {
+      const ids = [...selectedIds]
+      const BATCH_SIZE = 490
+      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const batch = writeBatch(db)
+        ids.slice(i, i + BATCH_SIZE).forEach((id) =>
+          batch.update(doc(db, 'books', id), {
+            isDeleted: true,
+            deletedAt: serverTimestamp(),
+            deletedBy: appUser.uid,
+          })
+        )
+        await batch.commit()
+      }
+      await writeAuditLog({
+        action: 'book_deleted',
+        entity: 'book',
+        details: `Soft-deleted ${ids.length} book${ids.length !== 1 ? 's' : ''}`,
+        performedBy: appUser.uid,
+        performedByName: appUser.displayName,
+        role: appUser.role,
+      })
+      toast.success(`${ids.length} book${ids.length !== 1 ? 's' : ''} deleted`)
+      setSelectedIds(new Set())
+      setDeleteConfirmOpen(false)
+    } catch {
+      toast.error('Delete failed')
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
+
   // ─── Export books ──────────────────────────────────────────────────────────
 
   const exportBooks = () => {
@@ -457,6 +496,7 @@ export default function Stock() {
   // ─── Filtered books ────────────────────────────────────────────────────────
 
   const filtered = books.filter((b) => {
+    if (b.isDeleted) return false
     const q = search.toLowerCase()
     const matchSearch = !q || b.name.toLowerCase().includes(q) || b.author.toLowerCase().includes(q) || (b.isbn ?? '').includes(q)
     const matchCat = !categoryFilter || b.category === categoryFilter
@@ -536,7 +576,7 @@ export default function Stock() {
 
       {/* Bulk action bar */}
       {selectedIds.size > 0 && (
-        <div className="flex items-center gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-2.5">
+        <div className="flex items-center gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-2.5 flex-wrap">
           <span className="text-sm font-semibold text-brand-700">{selectedIds.size} selected</span>
           <Button
             size="sm"
@@ -544,8 +584,29 @@ export default function Stock() {
           >
             <ListChecks className="h-4 w-4" /> Bulk Edit
           </Button>
+          {deleteConfirmOpen ? (
+            <span className="flex items-center gap-2 text-sm">
+              <span className="text-red-600 font-medium">Delete {selectedIds.size} book{selectedIds.size !== 1 ? 's' : ''}?</span>
+              <button
+                onClick={bulkSoftDelete}
+                disabled={bulkDeleting}
+                className="font-semibold text-red-600 hover:text-red-800 disabled:opacity-50"
+              >
+                {bulkDeleting ? 'Deleting…' : 'Yes, delete'}
+              </button>
+              <span className="text-gray-300">·</span>
+              <button onClick={() => setDeleteConfirmOpen(false)} className="text-gray-500 hover:text-gray-700">Cancel</button>
+            </span>
+          ) : (
+            <button
+              onClick={() => setDeleteConfirmOpen(true)}
+              className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
+            >
+              <Trash2 className="h-3.5 w-3.5" /> Delete
+            </button>
+          )}
           <button
-            onClick={() => setSelectedIds(new Set())}
+            onClick={() => { setSelectedIds(new Set()); setDeleteConfirmOpen(false) }}
             className="ml-auto flex items-center gap-1 text-sm text-brand-600 hover:text-brand-800"
           >
             <X className="h-4 w-4" /> Clear selection
