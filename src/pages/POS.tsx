@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   collection, query, runTransaction, Timestamp,
-  doc, addDoc, updateDoc, getDocs, where, serverTimestamp, increment,
+  doc, addDoc, updateDoc, setDoc, getDocs, where, serverTimestamp, increment,
 } from 'firebase/firestore'
 import toast from 'react-hot-toast'
 import {
@@ -116,7 +116,7 @@ export default function POS() {
   useEffect(() => {
     getDocs(query(collection(db, 'discounts'), where('isActive', '==', true)))
       .then((snap) => setDiscounts(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Discount)))
-      .catch(() => {/* silently ignore */})
+      .catch(() => console.warn('Failed to load discounts'))
   }, [])
 
   // Load all customers once for client-side search (far fewer Firestore reads)
@@ -225,11 +225,14 @@ export default function POS() {
     if (!appUser) return
     setShiftModalOpen(true)
     setShiftLoading(true)
+    setShiftStats(null)
+    let active = true   // guard against stale setState if modal is closed while loading
     try {
       const snap = await getDocs(query(
         collection(db, 'sales'),
         where('cashierId', '==', appUser.uid),
       ))
+      if (!active) return
       const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0)
       const todaySales = snap.docs
         .map((d) => ({ id: d.id, ...d.data() }) as Sale)
@@ -241,9 +244,12 @@ export default function POS() {
         cashRevenue: cashSales.reduce((sum, s) => sum + s.grandTotal, 0),
         cashSaleCount: cashSales.length,
       })
-    } catch { /* silently ignore */ } finally {
-      setShiftLoading(false)
+    } catch {
+      if (active) toast.error('Could not load today\'s sales data')
+    } finally {
+      if (active) setShiftLoading(false)
     }
+    return () => { active = false }
   }
 
   const closeShift = async () => {
@@ -326,13 +332,20 @@ export default function POS() {
     if (itemsToReturn.length === 0) { toast.error('Select at least one item to return'); return }
     if (!returnReason.trim()) { toast.error('Return reason is required'); return }
 
+    // Safe division — skip items with quantity 0 (corrupted data guard)
     const refundAmount = itemsToReturn.reduce((sum, item) => {
+      if (!item.quantity) return sum
       const perUnit = item.subtotal / item.quantity
       return sum + perUnit * (returnQtys[item.bookId] ?? 0)
     }, 0)
 
+    const totalOriginalQty = selectedReturnSale.items.reduce((s, i) => s + i.quantity, 0)
+    const returnedQty = itemsToReturn.reduce((s, item) => s + (returnQtys[item.bookId] ?? 0), 0)
+    const returnStatusValue: 'full' | 'partial' = returnedQty >= totalOriginalQty ? 'full' : 'partial'
+
     setReturnSubmitting(true)
     try {
+      // Single transaction: restore stock + update sale atomically
       await runTransaction(db, async (tx) => {
         for (const item of itemsToReturn) {
           const qty = returnQtys[item.bookId]
@@ -355,21 +368,19 @@ export default function POS() {
             createdAt: serverTimestamp(),
           })
         }
-      })
-
-      const totalOriginalQty = selectedReturnSale.items.reduce((s, i) => s + i.quantity, 0)
-      const returnedQty = itemsToReturn.reduce((s, item) => s + (returnQtys[item.bookId] ?? 0), 0)
-      await updateDoc(doc(db, 'sales', selectedReturnSale.id), {
-        returnStatus: returnedQty >= totalOriginalQty ? 'full' : 'partial',
-        returnedItems: itemsToReturn.map((item) => ({
-          bookId: item.bookId,
-          bookName: item.bookName,
-          quantityReturned: returnQtys[item.bookId],
-        })),
-        returnReason: returnReason.trim(),
-        returnedBy: appUser.uid,
-        returnedAt: serverTimestamp(),
-        returnRefundAmount: refundAmount,
+        // Update sale record inside the same transaction — fully atomic
+        tx.update(doc(db, 'sales', selectedReturnSale.id), {
+          returnStatus: returnStatusValue,
+          returnedItems: itemsToReturn.map((item) => ({
+            bookId: item.bookId,
+            bookName: item.bookName,
+            quantityReturned: returnQtys[item.bookId],
+          })),
+          returnReason: returnReason.trim(),
+          returnedBy: appUser.uid,
+          returnedAt: serverTimestamp(),
+          returnRefundAmount: refundAmount,
+        })
       })
 
       await writeAuditLog({
@@ -440,9 +451,12 @@ export default function POS() {
     if (!customerName.trim()) { toast.error('Customer name is required'); return }
     if (!customerPhone.trim()) { toast.error('Customer phone is required'); return }
 
-    const paid = parseFloat(amountPaid || '0')
+    // For cash: validate the entered amount. For all other methods: record exact total as paid.
+    const paid = paymentMethod === 'cash'
+      ? parseFloat(amountPaid || '0')
+      : grandTotal
     if (paymentMethod === 'cash' && paid < grandTotal) {
-      toast.error('Amount paid is less than total')
+      toast.error(`Amount paid (${formatCurrency(paid)}) is less than the total (${formatCurrency(grandTotal)})`)
       return
     }
 
@@ -499,14 +513,14 @@ export default function POS() {
         })
       })
 
-      // Save/update customer
-      let resolvedCustomerId = customerId
+      // Upsert customer — phone number is the document ID (prevents duplicates on concurrent checkouts)
       const customerRef = doc(db, 'customers', customerPhone)
       const customerSnap = await getDocs(
         query(collection(db, 'customers'), where('phone', '==', customerPhone))
       )
-      if (customerSnap.empty) {
-        await addDoc(collection(db, 'customers'), {
+      const isNewCustomer = customerSnap.empty
+      if (isNewCustomer) {
+        await setDoc(customerRef, {
           name: customerName,
           phone: customerPhone,
           email: '',
@@ -524,7 +538,6 @@ export default function POS() {
           role: appUser.role,
         })
       } else {
-        resolvedCustomerId = customerSnap.docs[0].id
         await updateDoc(customerRef, {
           name: customerName,
           totalPurchases: increment(1),
@@ -532,6 +545,8 @@ export default function POS() {
           lastPurchaseAt: serverTimestamp(),
         })
       }
+      // Phone is always the document ID — use it as the resolved customer ID
+      const resolvedCustomerId = customerPhone
 
       // Create sale record
       const saleRef = await addDoc(collection(db, 'sales'), {
@@ -593,7 +608,7 @@ export default function POS() {
       // Refresh customer list for next search
       getDocs(collection(db, 'customers'))
         .then((snap) => setAllCustomers(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Customer)))
-        .catch(() => {/* silently ignore */})
+        .catch(() => console.warn('Could not refresh customer list'))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Checkout failed')
     } finally {

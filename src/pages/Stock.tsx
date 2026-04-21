@@ -363,34 +363,36 @@ export default function Stock() {
     if (!appUser) return
     const validRows = importRows.filter((r) => r._valid)
     if (validRows.length === 0) { toast.error('No valid rows to import'); return }
+    // Hard cap at 490 to ensure the whole import fits in a single Firestore batch.
+    // This prevents partial-import corruption where batch 1 commits but batch 2 fails.
+    if (validRows.length > 490) {
+      toast.error(`Too many rows — maximum 490 per import (file has ${validRows.length} valid rows). Split into smaller files.`)
+      return
+    }
     setImporting(true)
     try {
-      // Firestore batch max is 500 writes — chunk if needed
-      const BATCH_SIZE = 490
-      for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
-        const chunk = validRows.slice(i, i + BATCH_SIZE)
-        const batch = writeBatch(db)
-        chunk.forEach((row) => {
-          const ref = doc(collection(db, 'books'))
-          batch.set(ref, {
-            name: row.name,
-            author: row.author,
-            isbn: row.isbn ?? '',
-            language: row.language,
-            category: row.category,
-            publisher: row.publisher ?? '',
-            mrp: row.mrp,
-            costPrice: row.costPrice,
-            inStock: row.inStock,
-            minStockAlert: row.minStockAlert,
-            description: row.description ?? '',
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-            createdBy: appUser.uid,
-          })
+      // Single atomic batch — all books commit together or none do
+      const batch = writeBatch(db)
+      validRows.forEach((row) => {
+        const ref = doc(collection(db, 'books'))
+        batch.set(ref, {
+          name: row.name,
+          author: row.author,
+          isbn: row.isbn ?? '',
+          language: row.language,
+          category: row.category,
+          publisher: row.publisher ?? '',
+          mrp: row.mrp,
+          costPrice: row.costPrice,
+          inStock: row.inStock,
+          minStockAlert: row.minStockAlert,
+          description: row.description ?? '',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          createdBy: appUser.uid,
         })
-        await batch.commit()
-      }
+      })
+      await batch.commit()
       // Single audit log summarising the whole import
       await writeAuditLog({
         action: 'book_created',

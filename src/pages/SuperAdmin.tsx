@@ -116,8 +116,8 @@ export default function SuperAdmin() {
 
   const todayStr = format(new Date(), 'yyyy-MM-dd')
   const todaySales = completedSales.filter((s) => {
-    if (!s.createdAt) return false
-    return format(s.createdAt.toDate(), 'yyyy-MM-dd') === todayStr
+    try { return s.createdAt && format(s.createdAt.toDate(), 'yyyy-MM-dd') === todayStr }
+    catch { return false }
   })
   const todayRevenue = todaySales.reduce((sum, s) => sum + s.grandTotal, 0)
 
@@ -295,13 +295,25 @@ export default function SuperAdmin() {
     if (itemsToReturn.length === 0) { toast.error('Select at least one item to return'); return }
     if (!returnReason.trim()) { toast.error('Return reason is required'); return }
 
+    // Safe division guard
     const refundAmount = itemsToReturn.reduce((sum, item) => {
+      if (!item.quantity) return sum
       const perUnit = item.subtotal / item.quantity
       return sum + perUnit * (returnQtys[item.bookId] ?? 0)
     }, 0)
 
+    const totalOriginalQty = returnModal.items.reduce((s, i) => s + i.quantity, 0)
+    const returnedQty = itemsToReturn.reduce((s, item) => s + (returnQtys[item.bookId] ?? 0), 0)
+    const returnStatusValue: ReturnStatus = returnedQty >= totalOriginalQty ? 'full' : 'partial'
+    const returnedItemsList = itemsToReturn.map((item) => ({
+      bookId: item.bookId,
+      bookName: item.bookName,
+      quantityReturned: returnQtys[item.bookId],
+    }))
+
     setReturnSubmitting(true)
     try {
+      // Single transaction: restore stock + update sale atomically
       await runTransaction(db, async (tx) => {
         for (const item of itemsToReturn) {
           const qty = returnQtys[item.bookId]
@@ -324,25 +336,24 @@ export default function SuperAdmin() {
             createdAt: serverTimestamp(),
           })
         }
+        tx.update(doc(db, 'sales', returnModal.id), {
+          returnStatus: returnStatusValue,
+          returnedItems: returnedItemsList,
+          returnReason: returnReason.trim(),
+          returnedBy: appUser.uid,
+          returnedAt: serverTimestamp(),
+          returnRefundAmount: refundAmount,
+        })
       })
 
-      const totalOriginalQty = returnModal.items.reduce((s, i) => s + i.quantity, 0)
-      const returnedQty = itemsToReturn.reduce((s, item) => s + (returnQtys[item.bookId] ?? 0), 0)
-      const updatedSaleFields = {
-        returnStatus: (returnedQty >= totalOriginalQty ? 'full' : 'partial') as ReturnStatus,
-        returnedItems: itemsToReturn.map((item) => ({
-          bookId: item.bookId,
-          bookName: item.bookName,
-          quantityReturned: returnQtys[item.bookId],
-        })),
-        returnReason: returnReason.trim(),
-        returnedBy: appUser.uid,
-        returnedAt: serverTimestamp(),
-        returnRefundAmount: refundAmount,
-      }
-      await updateDoc(doc(db, 'sales', returnModal.id), updatedSaleFields)
       setSales((prev) => prev.map((s) =>
-        s.id === returnModal.id ? { ...s, ...updatedSaleFields, returnedAt: undefined } : s
+        s.id === returnModal.id ? {
+          ...s,
+          returnStatus: returnStatusValue,
+          returnedItems: returnedItemsList,
+          returnReason: returnReason.trim(),
+          returnRefundAmount: refundAmount,
+        } : s
       ))
 
       await writeAuditLog({

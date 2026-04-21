@@ -54,7 +54,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const snap = await getDoc(doc(db, 'users', cred.user.uid))
     if (!snap.exists()) throw new Error('User profile not found. Contact your administrator.')
     const profile = { uid: cred.user.uid, ...snap.data() } as AppUser
-    if (!profile.isActive) throw new Error('Your account has been deactivated. Contact your administrator.')
+    // Explicit check — treats missing isActive field the same as false
+    if (profile.isActive !== true) throw new Error('Your account has been deactivated. Contact your administrator.')
     setAppUser(profile)
     await writeAuditLog({
       action: 'login',
