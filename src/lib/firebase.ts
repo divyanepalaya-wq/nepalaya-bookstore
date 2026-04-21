@@ -2,6 +2,7 @@ import { initializeApp, deleteApp } from 'firebase/app'
 import { getAuth, createUserWithEmailAndPassword, signOut as authSignOut } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
 import { getAnalytics, isSupported } from 'firebase/analytics'
+import { getFirebaseErrorMessage } from '@/lib/firebaseErrors'
 
 const firebaseConfig = {
   apiKey: 'AIzaSyBocT6eiXUavRBvuV3uWgfRSbB9S6XTSvo',
@@ -38,6 +39,8 @@ export async function createUserViaRest(email: string, password: string): Promis
   try {
     const cred = await createUserWithEmailAndPassword(tempAuth, email, password)
     return cred.user.uid
+  } catch (e) {
+    throw new Error(getFirebaseErrorMessage(e))
   } finally {
     await authSignOut(tempAuth).catch(() => {/* ignore */})
     await deleteApp(tempApp).catch(() => {/* ignore */})

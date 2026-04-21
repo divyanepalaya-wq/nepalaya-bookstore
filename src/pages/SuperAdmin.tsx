@@ -25,6 +25,7 @@ import { useBooks } from '@/contexts/BooksContext'
 import { writeAuditLog } from '@/lib/auditLog'
 import { formatCurrency, formatDateTime } from '@/lib/utils'
 import type { AppUser, Sale, AuditLog, UserRole, ReturnStatus } from '@/types'
+import { getFirebaseErrorMessage } from '@/lib/firebaseErrors'
 import { UserAvatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -209,7 +210,7 @@ export default function SuperAdmin() {
       setUserModalOpen(false)
       reset()
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to create user')
+      toast.error(getFirebaseErrorMessage(e))
     } finally {
       setSubmittingUser(false)
     }

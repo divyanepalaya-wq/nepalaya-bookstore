@@ -14,6 +14,7 @@ import { Lock, User, Mail, KeyRound, Shield } from 'lucide-react'
 import { auth, db } from '@/lib/firebase'
 import { useAuth } from '@/contexts/AuthContext'
 import { writeAuditLog } from '@/lib/auditLog'
+import { getFirebaseErrorMessage } from '@/lib/firebaseErrors'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 
@@ -74,12 +75,7 @@ export default function AccountSettings() {
       toast.success('Password updated successfully')
       resetPw()
     } catch (e) {
-      const msg = (e as { code?: string })?.code
-      if (msg === 'auth/wrong-password' || msg === 'auth/invalid-credential') {
-        toast.error('Current password is incorrect')
-      } else {
-        toast.error('Failed to update password')
-      }
+      toast.error(getFirebaseErrorMessage(e))
     } finally {
       setChangingPassword(false)
     }

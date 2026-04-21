@@ -9,6 +9,7 @@ import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore'
 import { auth, db } from '@/lib/firebase'
 import type { AppUser } from '@/types'
 import { writeAuditLog } from '@/lib/auditLog'
+import { getFirebaseErrorMessage } from '@/lib/firebaseErrors'
 
 interface AuthContextValue {
   user: FirebaseUser | null
@@ -44,7 +45,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signIn = async (email: string, password: string) => {
-    const cred = await signInWithEmailAndPassword(auth, email, password)
+    let cred
+    try {
+      cred = await signInWithEmailAndPassword(auth, email, password)
+    } catch (e) {
+      throw new Error(getFirebaseErrorMessage(e))
+    }
     const snap = await getDoc(doc(db, 'users', cred.user.uid))
     if (!snap.exists()) throw new Error('User profile not found. Contact your administrator.')
     const profile = { uid: cred.user.uid, ...snap.data() } as AppUser
