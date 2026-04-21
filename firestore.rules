@@ -22,7 +22,7 @@ service cloud.firestore {
       return isAuthenticated() && isActive() && (getRole() == 'admin' || getRole() == 'superadmin');
     }
 
-    function isCashier() {
+    function isCashier() {  
       return isAuthenticated() && isActive() && (
         getRole() == 'cashier' || getRole() == 'admin' || getRole() == 'superadmin'
       );
