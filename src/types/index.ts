@@ -18,6 +18,10 @@ export interface AppUser {
 
 // ─── Book ─────────────────────────────────────────────────────────────────────
 
+/** Primary / top-level grouping — required on every book */
+export type BookType = 'Nepalaya' | 'English' | 'Nepali'
+
+/** Sub-category (secondary) */
 export type BookCategory =
   | 'fiction'
   | 'non-fiction'
@@ -28,12 +32,16 @@ export type BookCategory =
   | 'magazine'
   | 'other'
 
+// Keep alias so old imports don't break
+export type BookLanguage = BookType
+
 export interface Book {
   id: string
   name: string
   author: string
   isbn?: string
-  category: BookCategory
+  language: BookType          // primary category (required)
+  category: BookCategory      // sub-category
   publisher?: string
   mrp: number
   costPrice: number

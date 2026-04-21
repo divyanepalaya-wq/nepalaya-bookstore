@@ -19,7 +19,7 @@ import { useBooks } from '@/contexts/BooksContext'
 import { writeAuditLog } from '@/lib/auditLog'
 import { formatCurrency, formatDateTime, cn } from '@/lib/utils'
 import { downloadCSV } from '@/lib/csvUtils'
-import type { Book, StockTransaction, BookCategory } from '@/types'
+import type { Book, StockTransaction, BookCategory, BookType } from '@/types'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
@@ -30,11 +30,19 @@ import { PageSpinner } from '@/components/ui/Spinner'
 
 // ─── Schemas ─────────────────────────────────────────────────────────────────
 
+/** Primary category options — the top-level grouping for every book */
+const BOOK_TYPE_OPTIONS: { value: BookType; label: string; description: string }[] = [
+  { value: 'Nepalaya', label: 'Nepalaya',  description: 'Published / distributed by Nepalaya' },
+  { value: 'English',  label: 'English',   description: 'English-language books' },
+  { value: 'Nepali',   label: 'Nepali',    description: 'Nepali-language books' },
+]
+
 const bookSchema = z.object({
   name: z.string().min(1, 'Required'),
   author: z.string().min(1, 'Required'),
   isbn: z.string().optional(),
-  category: z.string().min(1, 'Required'),
+  language: z.string().min(1, 'Required'),   // primary category
+  category: z.string().min(1, 'Required'),   // sub-category
   publisher: z.string().optional(),
   mrp: z.coerce.number().positive('Must be positive'),
   costPrice: z.coerce.number().positive('Must be positive'),
@@ -54,8 +62,7 @@ const stockAdjSchema = z.object({
 })
 type StockAdjData = z.infer<typeof stockAdjSchema>
 
-// ─── Category options ─────────────────────────────────────────────────────────
-
+/** Sub-category options */
 const CATEGORY_OPTIONS: { value: BookCategory; label: string }[] = [
   { value: 'fiction',     label: 'Fiction' },
   { value: 'non-fiction', label: 'Non-Fiction' },
@@ -73,6 +80,7 @@ type ModalType = null | 'add' | 'edit' | 'stockIn' | 'stockOut' | 'history' | 'i
 
 const bulkEditSchema = z.object({
   category:       z.string().optional(),
+  language:       z.string().optional(),
   mrp:            z.union([z.coerce.number().positive('Must be positive'), z.literal('')]).optional(),
   costPrice:      z.union([z.coerce.number().positive('Must be positive'), z.literal('')]).optional(),
   minStockAlert:  z.union([z.coerce.number().int().min(0, 'Cannot be negative'), z.literal('')]).optional(),
@@ -80,14 +88,17 @@ const bulkEditSchema = z.object({
 type BulkEditData = z.infer<typeof bulkEditSchema>
 
 // ─── Template columns ─────────────────────────────────────────────────────────
-const TEMPLATE_HEADERS = ['name', 'author', 'isbn', 'category', 'publisher', 'mrp', 'costPrice', 'inStock', 'minStockAlert', 'description']
-const TEMPLATE_EXAMPLE = ['The Alchemist', 'Paulo Coelho', '9780062315007', 'fiction', 'HarperCollins', 850, 600, 10, 3, 'A novel about following your dreams']
+// language = primary category (Nepalaya | English | Nepali)
+// category = sub-category (fiction | non-fiction | textbook | …)
+const TEMPLATE_HEADERS = ['name', 'author', 'isbn', 'language', 'category', 'publisher', 'mrp', 'costPrice', 'inStock', 'minStockAlert', 'description']
+const TEMPLATE_EXAMPLE = ['The Alchemist', 'Paulo Coelho', '9780062315007', 'English', 'fiction', 'HarperCollins', 850, 600, 10, 3, 'A novel about following your dreams']
 
 interface ImportRow {
   name: string
   author: string
   isbn?: string
-  category: string
+  language: string   // primary category
+  category: string   // sub-category
   publisher?: string
   mrp: number
   costPrice: number
@@ -105,6 +116,7 @@ export default function Stock() {
   const { books, loading: loadingBooks } = useBooks()
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
+  const [languageFilter, setLanguageFilter] = useState('')
   const [modalType, setModalType] = useState<ModalType>(null)
   const [selectedBook, setSelectedBook] = useState<Book | null>(null)
   const [history, setHistory] = useState<StockTransaction[]>([])
@@ -156,6 +168,7 @@ export default function Stock() {
       name: book.name,
       author: book.author,
       isbn: book.isbn ?? '',
+      language: book.language ?? '',
       category: book.category,
       publisher: book.publisher ?? '',
       mrp: book.mrp,
@@ -299,24 +312,33 @@ export default function Stock() {
         const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
 
         const rows: ImportRow[] = raw.map((r, idx) => {
-          const name = String(r['name'] ?? '').trim()
-          const author = String(r['author'] ?? '').trim()
+          const name     = String(r['name']     ?? '').trim()
+          const author   = String(r['author']   ?? '').trim()
+          const rawLang  = String(r['language'] ?? '').trim()
           const category = String(r['category'] ?? '').trim()
-          const mrp = parseFloat(String(r['mrp'] ?? 0))
+          const mrp      = parseFloat(String(r['mrp']      ?? 0))
           const costPrice = parseFloat(String(r['costPrice'] ?? 0))
-          const inStock = parseInt(String(r['inStock'] ?? 0), 10)
+          const inStock  = parseInt(String(r['inStock']  ?? 0), 10)
           const minStockAlert = parseInt(String(r['minStockAlert'] ?? 5), 10)
+
+          // Match language case-insensitively to a valid BookType
+          const langNorm = BOOK_TYPE_OPTIONS.find(
+            (l) => l.value.toLowerCase() === rawLang.toLowerCase()
+          )?.value
 
           let _error: string | undefined
           if (!name) _error = 'Missing name'
           else if (!author) _error = 'Missing author'
-          else if (!category) _error = 'Missing category'
+          else if (!langNorm) _error = `Invalid language "${rawLang}" — must be Nepalaya, English, or Nepali`
+          else if (!category) _error = 'Missing sub-category'
           else if (isNaN(mrp) || mrp <= 0) _error = 'Invalid MRP'
           else if (isNaN(costPrice) || costPrice <= 0) _error = 'Invalid cost price'
           else if (isNaN(inStock) || inStock < 0) _error = 'Invalid stock'
 
           return {
-            name, author, category,
+            name, author,
+            language: langNorm ?? rawLang,
+            category,
             isbn: String(r['isbn'] ?? '').trim() || undefined,
             publisher: String(r['publisher'] ?? '').trim() || undefined,
             mrp, costPrice, inStock,
@@ -354,6 +376,7 @@ export default function Stock() {
             name: row.name,
             author: row.author,
             isbn: row.isbn ?? '',
+            language: row.language,
             category: row.category,
             publisher: row.publisher ?? '',
             mrp: row.mrp,
@@ -418,6 +441,7 @@ export default function Stock() {
     // Only apply fields that were actually filled in
     const patch: Record<string, unknown> = { updatedAt: serverTimestamp() }
     if (data.category)      patch.category      = data.category
+    if (data.language)      patch.language      = data.language
     if (data.mrp !== '')    patch.mrp            = Number(data.mrp)
     if (data.costPrice !== '') patch.costPrice   = Number(data.costPrice)
     if (data.minStockAlert !== '') patch.minStockAlert = Number(data.minStockAlert)
@@ -492,12 +516,12 @@ export default function Stock() {
 
   const exportBooks = () => {
     const rows = filtered.map((b) => [
-      b.name, b.author, b.isbn ?? '', b.category, b.publisher ?? '',
+      b.name, b.author, b.isbn ?? '', b.language ?? '', b.category, b.publisher ?? '',
       b.mrp, b.costPrice, b.inStock, b.minStockAlert, b.description ?? '',
     ])
     downloadCSV(
       `nepalaya_books_${new Date().toISOString().slice(0, 10)}.csv`,
-      ['Name', 'Author', 'ISBN', 'Category', 'Publisher', 'MRP (Rs.)', 'Cost Price (Rs.)', 'In Stock', 'Min Stock Alert', 'Description'],
+      ['Name', 'Author', 'ISBN', 'Language (Category)', 'Sub-Category', 'Publisher', 'MRP (Rs.)', 'Cost Price (Rs.)', 'In Stock', 'Min Stock Alert', 'Description'],
       rows
     )
     toast.success(`Exported ${filtered.length} book${filtered.length !== 1 ? 's' : ''}`)
@@ -509,7 +533,8 @@ export default function Stock() {
     const q = search.toLowerCase()
     const matchSearch = !q || b.name.toLowerCase().includes(q) || b.author.toLowerCase().includes(q) || (b.isbn ?? '').includes(q)
     const matchCat = !categoryFilter || b.category === categoryFilter
-    return matchSearch && matchCat
+    const matchLang = !languageFilter || b.language === languageFilter
+    return matchSearch && matchCat && matchLang
   })
 
   const lowStockCount = books.filter((b) => b.inStock <= b.minStockAlert).length
@@ -566,11 +591,21 @@ export default function Stock() {
           <kbd className="absolute right-3 top-2 rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-xs text-gray-400 font-mono pointer-events-none">/</kbd>
         </div>
         <select
+          value={languageFilter}
+          onChange={(e) => setLanguageFilter(e.target.value)}
+          className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 sm:w-44"
+        >
+          <option value="">All Types</option>
+          {BOOK_TYPE_OPTIONS.map((l) => (
+            <option key={l.value} value={l.value}>{l.label}</option>
+          ))}
+        </select>
+        <select
           value={categoryFilter}
           onChange={(e) => setCategoryFilter(e.target.value)}
           className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 sm:w-44"
         >
-          <option value="">All Categories</option>
+          <option value="">All Sub-Categories</option>
           {[...new Set(books.map((b) => b.category))].sort().map((cat) => (
             <option key={cat} value={cat}>{cat}</option>
           ))}
@@ -626,7 +661,7 @@ export default function Stock() {
                     }}
                   />
                 </th>
-                {['Book', 'Category', 'MRP', 'Cost', 'In Stock', 'Actions'].map((h) => (
+                {['Book', 'Type / Sub-Cat', 'MRP', 'Cost', 'In Stock', 'Actions'].map((h) => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
                     {h}
                   </th>
@@ -664,7 +699,12 @@ export default function Stock() {
                         <p className="text-xs text-gray-400">{book.author}{book.isbn ? ` · ${book.isbn}` : ''}</p>
                       </td>
                       <td className="px-4 py-3">
-                        <Badge variant="blue">{book.category}</Badge>
+                        <div className="flex flex-col gap-1">
+                          <Badge variant={book.language === 'Nepalaya' ? 'orange' : book.language === 'Nepali' ? 'red' : 'blue'}>
+                            {book.language ?? '—'}
+                          </Badge>
+                          <Badge variant="gray" className="text-xs">{book.category}</Badge>
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-sm font-medium text-gray-800">{formatCurrency(book.mrp)}</td>
                       <td className="px-4 py-3 text-sm text-gray-600">{formatCurrency(book.costPrice)}</td>
@@ -727,14 +767,26 @@ export default function Stock() {
             Leave a field blank to keep its current value. Only filled fields will be updated.
           </p>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Category (primary)</label>
+            <select
+              {...bulkForm.register('language')}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+            >
+              <option value="">— keep current —</option>
+              {BOOK_TYPE_OPTIONS.map((l) => (
+                <option key={l.value} value={l.value}>{l.label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Sub-Category</label>
             <select
               {...bulkForm.register('category')}
               className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
             >
               <option value="">— keep current —</option>
-              {[...new Set(books.map((b) => b.category))].sort().map((cat) => (
-                <option key={cat} value={cat}>{cat}</option>
+              {CATEGORY_OPTIONS.map((c) => (
+                <option key={c.value} value={c.value}>{c.label}</option>
               ))}
             </select>
           </div>
@@ -829,8 +881,17 @@ export default function Stock() {
             <Input label="ISBN" {...bookForm.register('isbn')} />
             <Select
               label="Category *"
-              options={CATEGORY_OPTIONS}
+              options={BOOK_TYPE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
               placeholder="Select category"
+              hint="Nepalaya · English · Nepali"
+              error={bookForm.formState.errors.language?.message}
+              {...bookForm.register('language')}
+            />
+            <Select
+              label="Sub-Category *"
+              options={CATEGORY_OPTIONS}
+              placeholder="Select sub-category"
+              hint="Fiction, Non-Fiction, Textbook, etc."
               error={bookForm.formState.errors.category?.message}
               {...bookForm.register('category')}
             />

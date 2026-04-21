@@ -1,5 +1,5 @@
-import { initializeApp } from 'firebase/app'
-import { getAuth } from 'firebase/auth'
+import { initializeApp, deleteApp } from 'firebase/app'
+import { getAuth, createUserWithEmailAndPassword, signOut as authSignOut } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
 import { getAnalytics, isSupported } from 'firebase/analytics'
 
@@ -22,20 +22,24 @@ isSupported().then((supported) => {
   if (supported) getAnalytics(app)
 })
 
-/** Create a user account via Firebase REST API (without signing in as them). */
+/**
+ * Create a user account without affecting the current admin session.
+ * Uses a secondary Firebase app instance so the new user is never signed
+ * into the primary auth context.
+ *
+ * IMPORTANT: Firebase Authentication must allow email/password sign-up.
+ * If you see ADMIN_ONLY_OPERATION, go to:
+ *   Firebase Console → Authentication → Settings → User actions
+ *   and make sure "Disable create (sign-up)" is NOT checked.
+ */
 export async function createUserViaRest(email: string, password: string): Promise<string> {
-  const res = await fetch(
-    `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${firebaseConfig.apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, returnSecureToken: true }),
-    }
-  )
-  if (!res.ok) {
-    const err = await res.json()
-    throw new Error(err.error?.message ?? 'Failed to create user')
+  const tempApp = initializeApp(firebaseConfig, `user-create-${Date.now()}`)
+  const tempAuth = getAuth(tempApp)
+  try {
+    const cred = await createUserWithEmailAndPassword(tempAuth, email, password)
+    return cred.user.uid
+  } finally {
+    await authSignOut(tempAuth).catch(() => {/* ignore */})
+    await deleteApp(tempApp).catch(() => {/* ignore */})
   }
-  const data = await res.json()
-  return data.localId as string
 }

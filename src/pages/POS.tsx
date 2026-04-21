@@ -666,6 +666,16 @@ export default function POS() {
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-900 truncate">{book.name}</p>
                     <p className="text-xs text-gray-400 truncate">{book.author}</p>
+                    {book.language && (
+                      <span className={cn(
+                        'inline-block mt-0.5 rounded px-1.5 py-0.5 text-[10px] font-semibold',
+                        book.language === 'Nepalaya' ? 'bg-brand-100 text-brand-700'
+                          : book.language === 'Nepali' ? 'bg-accent-100 text-accent-700'
+                          : 'bg-gray-100 text-gray-600'
+                      )}>
+                        {book.language}
+                      </span>
+                    )}
                   </div>
                   <div className="text-right shrink-0">
                     <p className="text-sm font-semibold text-gray-800">{formatCurrency(book.mrp)}</p>

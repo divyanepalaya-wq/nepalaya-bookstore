@@ -46,7 +46,7 @@ service cloud.firestore {
     // ── Stock Transactions (append-only — no update/delete ever) ────────────
     match /stockTransactions/{txId} {
       allow read:          if isAdmin();
-      allow create:        if isAdmin();
+      allow create:        if isCashier();   // cashiers create these during POS sales and returns
       allow update, delete: if false;
     }
 
@@ -61,7 +61,7 @@ service cloud.firestore {
     match /sales/{saleId} {
       allow read:   if isCashier();
       allow create: if isCashier();
-      allow update: if isAdmin();   // voiding
+      allow update: if isCashier();   // cashiers can update for returns; admins can void
       allow delete: if isSuperAdmin();
     }
 
@@ -78,5 +78,13 @@ service cloud.firestore {
       allow create:        if isAuthenticated();
       allow update, delete: if false;
     }
+
+    // ── Shift Closes (cashiers write, admins read) ─────────────────────────
+    match /shiftCloses/{closeId} {
+      allow read:          if isAdmin();
+      allow create:        if isCashier();
+      allow update, delete: if false;
+    }
+
   }
 }
