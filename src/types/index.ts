@@ -38,7 +38,7 @@ export type BookLanguage = BookType
 export interface Book {
   id: string
   name: string
-  author: string
+  author?: string
   isbn?: string
   language: BookType          // primary category (required)
   category: BookCategory      // sub-category

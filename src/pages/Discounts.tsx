@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react'
 import {
-  collection, onSnapshot, addDoc, updateDoc, deleteDoc,
+  collection, getDocs, addDoc, updateDoc, deleteDoc,
   doc, serverTimestamp, query, orderBy,
 } from 'firebase/firestore'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import toast from 'react-hot-toast'
-import { Plus, Pencil, Trash2, Tag, ToggleLeft, ToggleRight } from 'lucide-react'
+import { Plus, Pencil, Trash2, Tag, ToggleLeft, ToggleRight, RefreshCw } from 'lucide-react'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/contexts/AuthContext'
 import { writeAuditLog } from '@/lib/auditLog'
@@ -54,16 +54,19 @@ export default function Discounts() {
     defaultValues: { type: 'percentage', scope: 'order' },
   })
 
-  useEffect(() => {
-    const unsub = onSnapshot(
-      query(collection(db, 'discounts'), orderBy('createdAt', 'desc')),
-      (snap) => {
+  // One-time fetch — discounts rarely change and don't need a live listener.
+  // Use the refresh button to reload after making changes on another device.
+  const fetchDiscounts = () => {
+    setLoading(true)
+    getDocs(query(collection(db, 'discounts'), orderBy('createdAt', 'desc')))
+      .then((snap) => {
         setDiscounts(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Discount))
-        setLoading(false)
-      }
-    )
-    return unsub
-  }, [])
+      })
+      .catch(() => toast.error('Failed to load discounts'))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { fetchDiscounts() }, [])
 
   const openAdd = () => {
     reset({ type: 'percentage', scope: 'order' })
@@ -101,6 +104,7 @@ export default function Discounts() {
           role: appUser.role,
         })
         toast.success('Discount updated')
+      fetchDiscounts()
       } else {
         const ref = await addDoc(collection(db, 'discounts'), {
           ...data,
@@ -118,6 +122,7 @@ export default function Discounts() {
           role: appUser.role,
         })
         toast.success('Discount created')
+        fetchDiscounts()
       }
       setModalOpen(false)
     } catch {
@@ -131,6 +136,8 @@ export default function Discounts() {
     if (!appUser) return
     try {
       await updateDoc(doc(db, 'discounts', d.id), { isActive: !d.isActive })
+      // Update local state directly — no need to re-fetch for a simple boolean flip
+      setDiscounts((prev) => prev.map((x) => x.id === d.id ? { ...x, isActive: !d.isActive } : x))
       toast.success(d.isActive ? 'Discount deactivated' : 'Discount activated')
     } catch {
       toast.error('Failed to update discount')
@@ -140,6 +147,7 @@ export default function Discounts() {
   const remove = async () => {
     if (!deleteConfirm || !appUser) return
     await deleteDoc(doc(db, 'discounts', deleteConfirm.id))
+    setDiscounts((prev) => prev.filter((x) => x.id !== deleteConfirm.id))
     await writeAuditLog({
       action: 'discount_deleted',
       entity: 'discount',
@@ -160,7 +168,17 @@ export default function Discounts() {
           <h1 className="text-xl font-bold text-gray-900">Discounts</h1>
           <p className="text-sm text-gray-500">Manage saved discount rules for the POS</p>
         </div>
-        <Button onClick={openAdd}><Plus className="h-4 w-4" /> New Discount</Button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={fetchDiscounts}
+            disabled={loading}
+            title="Refresh discounts"
+            className="rounded-lg border border-gray-300 bg-white p-2 text-gray-500 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+          <Button onClick={openAdd}><Plus className="h-4 w-4" /> New Discount</Button>
+        </div>
       </div>
 
       {loading ? (

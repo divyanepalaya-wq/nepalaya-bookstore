@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import {
-  collection, query, runTransaction, Timestamp,
-  doc, addDoc, updateDoc, setDoc, getDocs, where, serverTimestamp, increment,
+  collection, query, where, runTransaction, Timestamp,
+  doc, addDoc, updateDoc, setDoc, getDocs, serverTimestamp, increment,
 } from 'firebase/firestore'
 import toast from 'react-hot-toast'
 import {
@@ -14,6 +14,7 @@ import { useBooks } from '@/contexts/BooksContext'
 import { writeAuditLog } from '@/lib/auditLog'
 import { formatCurrency, cn } from '@/lib/utils'
 import { printReceipt } from '@/lib/receipt'
+import { updateDailyAnalytics } from '@/lib/analyticsAgg'
 import type { Book, Customer, CartItem, PaymentMethod, Discount, Sale } from '@/types'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -513,12 +514,10 @@ export default function POS() {
         })
       })
 
-      // Upsert customer — phone number is the document ID (prevents duplicates on concurrent checkouts)
+      // Upsert customer — phone is the document ID (prevents duplicates).
+      // Check against already-loaded local state — no extra Firestore read needed.
       const customerRef = doc(db, 'customers', customerPhone)
-      const customerSnap = await getDocs(
-        query(collection(db, 'customers'), where('phone', '==', customerPhone))
-      )
-      const isNewCustomer = customerSnap.empty
+      const isNewCustomer = !allCustomers.some((c) => c.phone === customerPhone)
       if (isNewCustomer) {
         await setDoc(customerRef, {
           name: customerName,
@@ -605,10 +604,23 @@ export default function POS() {
       setCheckoutModalOpen(false)
       setSuccessModalOpen(true)
       clearCart()
-      // Refresh customer list for next search
-      getDocs(collection(db, 'customers'))
-        .then((snap) => setAllCustomers(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Customer)))
-        .catch(() => console.warn('Could not refresh customer list'))
+
+      // Update local customer list without a Firestore read
+      setAllCustomers((prev) => {
+        if (isNewCustomer) {
+          return [...prev, {
+            id: customerPhone, name: customerName, phone: customerPhone,
+            email: '', totalPurchases: 1, totalSpent: grandTotal,
+          } as Customer]
+        }
+        return prev.map((c) => c.phone === customerPhone
+          ? { ...c, name: customerName, totalPurchases: c.totalPurchases + 1, totalSpent: c.totalSpent + grandTotal }
+          : c
+        )
+      })
+
+      // Fire-and-forget analytics update (errors are swallowed inside the helper)
+      updateDailyAnalytics({ grandTotal, paymentMethod, items: saleItems })
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Checkout failed')
     } finally {
@@ -620,7 +632,7 @@ export default function POS() {
 
   const filteredBooks = books.filter((b) => {
     const q = bookSearch.toLowerCase()
-    return !q || b.name.toLowerCase().includes(q) || b.author.toLowerCase().includes(q) || (b.isbn ?? '').includes(q)
+    return !q || b.name.toLowerCase().includes(q) || (b.author ?? '').toLowerCase().includes(q) || (b.isbn ?? '').includes(q)
   })
 
   const inCartIds = new Set(cart.map((i) => i.bookId))

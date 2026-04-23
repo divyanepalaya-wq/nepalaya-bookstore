@@ -86,5 +86,12 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // ── Daily Analytics (cashiers write via setDoc merge, admins read) ─────
+    // Written by POS on every sale — one doc per day, fields are incremented.
+    match /analytics/{docId} {
+      allow read:   if isAdmin();
+      allow write:  if isCashier();
+    }
+
   }
 }

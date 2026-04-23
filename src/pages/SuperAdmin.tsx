@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
 import {
-  collection, onSnapshot, getDocs, query, orderBy,
-  doc, setDoc, updateDoc, serverTimestamp, limit, runTransaction, increment,
+  collection, onSnapshot, getDocs, getDoc, query, orderBy,
+  doc, setDoc, updateDoc, serverTimestamp, limit, startAfter, runTransaction, increment,
+  type QueryDocumentSnapshot,
 } from 'firebase/firestore'
+import type { DailyAnalytics } from '@/lib/analyticsAgg'
 
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -68,10 +70,19 @@ export default function SuperAdmin() {
   const [activeTab, setActiveTab] = useState<Tab>('analytics')
 
   // ─── Data ──────────────────────────────────────────────────────────────────
-  const [users, setUsers]     = useState<AppUser[]>([])
-  const [sales, setSales]     = useState<Sale[]>([])
+  const [users, setUsers]         = useState<AppUser[]>([])
+  const [sales, setSales]         = useState<Sale[]>([])
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
-  const [loading, setLoading] = useState(true)
+  const [analyticsDocs, setAnalyticsDocs] = useState<DailyAnalytics[]>([])
+  const [loading, setLoading]     = useState(true)
+
+  // Pagination cursors
+  const [salesCursor, setSalesCursor]     = useState<QueryDocumentSnapshot | null>(null)
+  const [hasMoreSales, setHasMoreSales]   = useState(false)
+  const [loadingMoreSales, setLoadingMoreSales] = useState(false)
+  const [auditCursor, setAuditCursor]     = useState<QueryDocumentSnapshot | null>(null)
+  const [hasMoreAudit, setHasMoreAudit]   = useState(false)
+  const [loadingMoreAudit, setLoadingMoreAudit] = useState(false)
 
   // Filters
   const [salesSearch, setSalesSearch] = useState('')
@@ -90,92 +101,139 @@ export default function SuperAdmin() {
   const [returnSubmitting, setReturnSubmitting] = useState(false)
 
   // ─── Data loading ──────────────────────────────────────────────────────────
-  // Users and books use live listeners (need real-time for toggling/stock alerts)
-  // Sales and audit logs use one-time fetch to minimize Firestore reads
+  // Strategy (minimises Firestore reads):
+  //   • Users  — live listener (need real-time for activation/deactivation)
+  //   • Analytics — 30 daily-summary docs   ≈ 30 reads  (replaces 500-sale load)
+  //   • Sales log  — first 50 most recent   ≈ 50 reads  (+ "Load more" cursor pages)
+  //   • Audit log  — first 20 most recent   ≈ 20 reads  (+ "Load more" cursor pages)
+  //   Total per page open: ~100 reads  (was ~1020)
 
   useEffect(() => {
-    const unsubs = [
-      onSnapshot(query(collection(db, 'users'), orderBy('createdAt', 'desc')), (s) =>
-        setUsers(s.docs.map((d) => ({ uid: d.id, ...d.data() }) as AppUser))),
-    ]
-    // One-time fetch for sales and audit logs
+    const unsub = onSnapshot(
+      query(collection(db, 'users'), orderBy('createdAt', 'desc')),
+      (s) => setUsers(s.docs.map((d) => ({ uid: d.id, ...d.data() }) as AppUser)),
+    )
+
+    // Build array of the last 30 date strings to fetch analytics docs
+    const last30Dates = Array.from({ length: 30 }, (_, i) => {
+      const d = subDays(new Date(), i)
+      return format(d, 'yyyy-MM-dd')
+    })
+
     Promise.all([
-      getDocs(query(collection(db, 'sales'), orderBy('createdAt', 'desc'), limit(500))),
-      getDocs(query(collection(db, 'auditLogs'), orderBy('createdAt', 'desc'), limit(500))),
-    ]).then(([salesSnap, auditSnap]) => {
-      setSales(salesSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as Sale))
-      setAuditLogs(auditSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as AuditLog))
+      // 30 individual getDoc calls — one per day — same cost as a query returning 30 docs
+      Promise.all(last30Dates.map((d) => getDoc(doc(db, 'analytics', d)))),
+      // First page of sales (50)
+      getDocs(query(collection(db, 'sales'), orderBy('createdAt', 'desc'), limit(50))),
+      // First page of audit logs (20)
+      getDocs(query(collection(db, 'auditLogs'), orderBy('createdAt', 'desc'), limit(20))),
+    ]).then(([analyticsSnaps, salesSnap, auditSnap]) => {
+      setAnalyticsDocs(
+        analyticsSnaps
+          .filter((s) => s.exists())
+          .map((s) => s.data() as DailyAnalytics)
+      )
+      const salesDocs = salesSnap.docs
+      setSales(salesDocs.map((d) => ({ id: d.id, ...d.data() }) as Sale))
+      setSalesCursor(salesDocs[salesDocs.length - 1] ?? null)
+      setHasMoreSales(salesDocs.length === 50)
+
+      const auditDocs = auditSnap.docs
+      setAuditLogs(auditDocs.map((d) => ({ id: d.id, ...d.data() }) as AuditLog))
+      setAuditCursor(auditDocs[auditDocs.length - 1] ?? null)
+      setHasMoreAudit(auditDocs.length === 20)
+
       setLoading(false)
     }).catch(() => setLoading(false))
-    return () => unsubs.forEach((u) => u())
+
+    return unsub
   }, [])
 
-  // ─── Analytics computations ────────────────────────────────────────────────
+  const loadMoreSales = async () => {
+    if (!salesCursor || loadingMoreSales) return
+    setLoadingMoreSales(true)
+    try {
+      const snap = await getDocs(
+        query(collection(db, 'sales'), orderBy('createdAt', 'desc'), startAfter(salesCursor), limit(50))
+      )
+      setSales((prev) => [...prev, ...snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Sale)])
+      setSalesCursor(snap.docs[snap.docs.length - 1] ?? null)
+      setHasMoreSales(snap.docs.length === 50)
+    } finally {
+      setLoadingMoreSales(false)
+    }
+  }
 
-  const completedSales = sales.filter((s) => s.status === 'completed')
+  const loadMoreAudit = async () => {
+    if (!auditCursor || loadingMoreAudit) return
+    setLoadingMoreAudit(true)
+    try {
+      const snap = await getDocs(
+        query(collection(db, 'auditLogs'), orderBy('createdAt', 'desc'), startAfter(auditCursor), limit(20))
+      )
+      setAuditLogs((prev) => [...prev, ...snap.docs.map((d) => ({ id: d.id, ...d.data() }) as AuditLog)])
+      setAuditCursor(snap.docs[snap.docs.length - 1] ?? null)
+      setHasMoreAudit(snap.docs.length === 20)
+    } finally {
+      setLoadingMoreAudit(false)
+    }
+  }
+
+  // ─── Analytics computations (from pre-aggregated daily docs — 0 extra reads) ──
 
   const todayStr = format(new Date(), 'yyyy-MM-dd')
-  const todaySales = completedSales.filter((s) => {
-    try { return s.createdAt && format(s.createdAt.toDate(), 'yyyy-MM-dd') === todayStr }
-    catch { return false }
-  })
-  const todayRevenue = todaySales.reduce((sum, s) => sum + s.grandTotal, 0)
+  const analyticsMap = new Map(analyticsDocs.map((a) => [a.date, a]))
+  const todayAnalytics = analyticsMap.get(todayStr)
 
-  const totalRevenue = completedSales.reduce((sum, s) => sum + s.grandTotal, 0)
-  const totalSalesCount = completedSales.length
+  const todayRevenue    = todayAnalytics?.totalRevenue  ?? 0
+  const todaySaleCount  = todayAnalytics?.saleCount     ?? 0
+  const totalRevenue    = analyticsDocs.reduce((sum, a) => sum + (a.totalRevenue ?? 0), 0)
+  const totalSalesCount = analyticsDocs.reduce((sum, a) => sum + (a.saleCount   ?? 0), 0)
+  const avgOrderValue   = totalSalesCount > 0 ? totalRevenue / totalSalesCount : 0
 
   const lowStockBooks = books.filter((b) => b.inStock <= b.minStockAlert)
 
-  // Revenue last 30 days chart data
+  // Revenue last 30 days chart — each point is one analytics doc read (already in memory)
   const revenueChart = Array.from({ length: 30 }, (_, i) => {
-    const d = subDays(new Date(), 29 - i)
+    const d       = subDays(new Date(), 29 - i)
     const dateStr = format(d, 'yyyy-MM-dd')
-    const rev = completedSales
-      .filter((s) => s.createdAt && format(s.createdAt.toDate(), 'yyyy-MM-dd') === dateStr)
-      .reduce((sum, s) => sum + s.grandTotal, 0)
-    return { date: format(d, 'MMM d'), revenue: rev }
+    return { date: format(d, 'MMM d'), revenue: analyticsMap.get(dateStr)?.totalRevenue ?? 0 }
   })
 
-  // Top 5 books by qty sold
+  // Top 5 books — aggregated across all 30 analytics docs
   const bookQtyMap: Record<string, { name: string; qty: number; revenue: number }> = {}
-  completedSales.forEach((sale) => {
-    sale.items.forEach((item) => {
-      if (!bookQtyMap[item.bookId]) bookQtyMap[item.bookId] = { name: item.bookName, qty: 0, revenue: 0 }
-      bookQtyMap[item.bookId].qty += item.quantity
-      bookQtyMap[item.bookId].revenue += item.subtotal
+  analyticsDocs.forEach((a) => {
+    Object.entries(a.topBooks ?? {}).forEach(([bookId, data]) => {
+      if (!bookQtyMap[bookId]) bookQtyMap[bookId] = { name: data.name, qty: 0, revenue: 0 }
+      bookQtyMap[bookId].qty     += data.qty     ?? 0
+      bookQtyMap[bookId].revenue += data.revenue ?? 0
     })
   })
-  const topBooks = Object.values(bookQtyMap)
-    .sort((a, b) => b.qty - a.qty)
-    .slice(0, 5)
+  const topBooks = Object.values(bookQtyMap).sort((a, b) => b.qty - a.qty).slice(0, 5)
 
-  // Category distribution
+  // Category distribution — from books context (already in memory, 0 reads)
   const categoryMap: Record<string, number> = {}
   books.forEach((b) => { categoryMap[b.category] = (categoryMap[b.category] ?? 0) + 1 })
   const categoryData = Object.entries(categoryMap).map(([name, value]) => ({ name, value }))
 
-  // Payment method distribution
+  // Payment method distribution — aggregated across 30 analytics docs
   const paymentMap: Record<string, { method: string; count: number; revenue: number }> = {}
-  completedSales.forEach((s) => {
-    if (!paymentMap[s.paymentMethod]) paymentMap[s.paymentMethod] = { method: s.paymentMethod, count: 0, revenue: 0 }
-    paymentMap[s.paymentMethod].count += 1
-    paymentMap[s.paymentMethod].revenue += s.grandTotal
+  analyticsDocs.forEach((a) => {
+    Object.entries(a.paymentMethods ?? {}).forEach(([method, data]) => {
+      if (!paymentMap[method]) paymentMap[method] = { method, count: 0, revenue: 0 }
+      paymentMap[method].count   += data.count   ?? 0
+      paymentMap[method].revenue += data.revenue ?? 0
+    })
   })
   const paymentData = Object.values(paymentMap).sort((a, b) => b.revenue - a.revenue)
 
-  // Hourly sales distribution (all time)
-  const hourlyMap: Record<number, { hour: number; label: string; count: number; revenue: number }> = {}
-  for (let h = 0; h < 24; h++) hourlyMap[h] = { hour: h, label: `${h.toString().padStart(2, '0')}:00`, count: 0, revenue: 0 }
-  completedSales.forEach((s) => {
-    if (!s.createdAt) return
-    const h = s.createdAt.toDate().getHours()
-    hourlyMap[h].count += 1
-    hourlyMap[h].revenue += s.grandTotal
-  })
-  const hourlyData = Object.values(hourlyMap)
-
-  // Average order value (last 30 days)
-  const avgOrderValue = totalSalesCount > 0 ? totalRevenue / totalSalesCount : 0
+  // Hourly distribution — from today's analytics doc (most relevant for operations)
+  const hourlyData = Array.from({ length: 24 }, (_, h) => ({
+    hour: h,
+    label: `${h.toString().padStart(2, '0')}:00`,
+    count:   todayAnalytics?.hourlyCount?.[String(h)]   ?? 0,
+    revenue: todayAnalytics?.hourlyRevenue?.[String(h)] ?? 0,
+  }))
 
   // ─── User management ───────────────────────────────────────────────────────
 
@@ -399,7 +457,7 @@ export default function SuperAdmin() {
     downloadCSV(
       `low_stock_${format(new Date(), 'yyyy-MM-dd')}.csv`,
       ['Book Name', 'Author', 'Category', 'In Stock', 'Alert Threshold', 'MRP (Rs.)'],
-      lowStockBooks.map((b) => [b.name, b.author, b.category, b.inStock, b.minStockAlert, b.mrp])
+      lowStockBooks.map((b) => [b.name, b.author ?? '', b.category, b.inStock, b.minStockAlert, b.mrp])
     )
   }
 
@@ -484,14 +542,14 @@ export default function SuperAdmin() {
             <StatCard
               title="Today's Revenue"
               value={formatCurrency(todayRevenue)}
-              subtitle={`${todaySales.length} sales today`}
+              subtitle={`${todaySaleCount} sales today`}
               icon={<DollarSign className="h-5 w-5" />}
               color="accent"
             />
             <StatCard
-              title="Total Revenue"
+              title="Revenue (30 days)"
               value={formatCurrency(totalRevenue)}
-              subtitle={`${totalSalesCount} total sales`}
+              subtitle={`${totalSalesCount} sales`}
               icon={<TrendingUp className="h-5 w-5" />}
               color="brand"
             />
@@ -616,7 +674,7 @@ export default function SuperAdmin() {
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="rounded-xl border border-gray-200 bg-white p-5">
               <h2 className="text-sm font-semibold text-gray-700 mb-4">Sales by Hour of Day</h2>
-              {completedSales.length === 0 ? (
+              {totalSalesCount === 0 ? (
                 <p className="text-sm text-gray-400 text-center py-8">No sales data yet</p>
               ) : (
                 <ResponsiveContainer width="100%" height={200}>
@@ -852,6 +910,14 @@ export default function SuperAdmin() {
             </table>
           </div>
 
+          {hasMoreSales && (
+            <div className="flex justify-center pt-1">
+              <Button variant="outline" size="sm" loading={loadingMoreSales} onClick={loadMoreSales}>
+                Load more sales
+              </Button>
+            </div>
+          )}
+
           <Modal open={!!returnModal} onClose={() => { if (!returnSubmitting) { setReturnModal(null); setReturnQtys({}); setReturnReason('') } }} title="Process Return" size="md">
             <div className="space-y-4">
               {returnModal && (
@@ -946,6 +1012,7 @@ export default function SuperAdmin() {
             {filteredAudit.length === 0 ? (
               <div className="py-10 text-center text-sm text-gray-400">No audit logs</div>
             ) : filteredAudit.map((log) => (
+
               <div key={log.id} className="flex items-start gap-3 px-4 py-3">
                 <div className="shrink-0 mt-0.5">
                   <ActionIcon action={log.action} />
@@ -963,6 +1030,14 @@ export default function SuperAdmin() {
               </div>
             ))}
           </div>
+
+          {hasMoreAudit && (
+            <div className="flex justify-center pt-1">
+              <Button variant="outline" size="sm" loading={loadingMoreAudit} onClick={loadMoreAudit}>
+                Load more logs
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>

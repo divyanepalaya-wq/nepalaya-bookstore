@@ -39,19 +39,16 @@ const BOOK_TYPE_OPTIONS: { value: BookType; label: string; description: string }
 
 const bookSchema = z.object({
   name: z.string().min(1, 'Required'),
-  author: z.string().min(1, 'Required'),
+  author: z.string().optional(),
   isbn: z.string().optional(),
   language: z.string().min(1, 'Required'),   // primary category
   category: z.string().min(1, 'Required'),   // sub-category
   publisher: z.string().optional(),
   mrp: z.coerce.number().positive('Must be positive'),
-  costPrice: z.coerce.number().positive('Must be positive'),
+  costPrice: z.coerce.number().min(0).default(0),
   inStock: z.coerce.number().int().min(0, 'Cannot be negative'),
   minStockAlert: z.coerce.number().int().min(0).default(5),
   description: z.string().optional(),
-}).refine((d) => d.costPrice <= d.mrp, {
-  message: 'Cost price cannot exceed MRP',
-  path: ['costPrice'],
 })
 type BookFormData = z.infer<typeof bookSchema>
 
@@ -92,10 +89,11 @@ type BulkEditData = z.infer<typeof bulkEditSchema>
 // category = sub-category (fiction | non-fiction | textbook | …)
 const TEMPLATE_HEADERS = ['name', 'author', 'isbn', 'language', 'category', 'publisher', 'mrp', 'costPrice', 'inStock', 'minStockAlert', 'description']
 const TEMPLATE_EXAMPLE = ['The Alchemist', 'Paulo Coelho', '9780062315007', 'English', 'fiction', 'HarperCollins', 850, 600, 10, 3, 'A novel about following your dreams']
+// author, isbn, costPrice, description are optional — leave blank if unknown
 
 interface ImportRow {
   name: string
-  author: string
+  author?: string
   isbn?: string
   language: string   // primary category
   category: string   // sub-category
@@ -124,6 +122,7 @@ export default function Stock() {
   const [submitting, setSubmitting] = useState(false)
   const [importRows, setImportRows] = useState<ImportRow[]>([])
   const [importing, setImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkSubmitting, setBulkSubmitting] = useState(false)
   const [bulkDeleting, setBulkDeleting] = useState(false)
@@ -166,7 +165,7 @@ export default function Stock() {
   const openEdit = (book: Book) => {
     bookForm.reset({
       name: book.name,
-      author: book.author,
+      author: book.author ?? '',
       isbn: book.isbn ?? '',
       language: book.language ?? '',
       category: book.category,
@@ -188,6 +187,8 @@ export default function Stock() {
       if (modalType === 'add') {
         const ref = await addDoc(collection(db, 'books'), {
           ...data,
+          author: data.author ?? '',
+          costPrice: data.costPrice ?? 0,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
           createdBy: appUser.uid,
@@ -205,6 +206,8 @@ export default function Stock() {
       } else if (modalType === 'edit' && selectedBook) {
         await updateDoc(doc(db, 'books', selectedBook.id), {
           ...data,
+          author: data.author ?? '',
+          costPrice: data.costPrice ?? 0,
           updatedAt: serverTimestamp(),
         })
         await writeAuditLog({
@@ -312,13 +315,14 @@ export default function Stock() {
         const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
 
         const rows: ImportRow[] = raw.map((r, idx) => {
-          const name     = String(r['name']     ?? '').trim()
-          const author   = String(r['author']   ?? '').trim()
-          const rawLang  = String(r['language'] ?? '').trim()
-          const category = String(r['category'] ?? '').trim()
-          const mrp      = parseFloat(String(r['mrp']      ?? 0))
-          const costPrice = parseFloat(String(r['costPrice'] ?? 0))
-          const inStock  = parseInt(String(r['inStock']  ?? 0), 10)
+          const name      = String(r['name']      ?? '').trim()
+          const author    = String(r['author']    ?? '').trim() || undefined  // optional
+          const rawLang   = String(r['language']  ?? '').trim()
+          const category  = String(r['category']  ?? '').trim()
+          const mrp       = parseFloat(String(r['mrp']       ?? 0))
+          const rawCost   = String(r['costPrice'] ?? '').trim()
+          const costPrice = rawCost === '' ? 0 : parseFloat(rawCost)          // optional — defaults to 0
+          const inStock   = parseInt(String(r['inStock']  ?? 0), 10)
           const minStockAlert = parseInt(String(r['minStockAlert'] ?? 5), 10)
 
           // Match language case-insensitively to a valid BookType
@@ -327,12 +331,11 @@ export default function Stock() {
           )?.value
 
           let _error: string | undefined
-          if (!name) _error = 'Missing name'
-          else if (!author) _error = 'Missing author'
+          if (!name)   _error = 'Missing name'
           else if (!langNorm) _error = `Invalid language "${rawLang}" — must be Nepalaya, English, or Nepali`
           else if (!category) _error = 'Missing sub-category'
           else if (isNaN(mrp) || mrp <= 0) _error = 'Invalid MRP'
-          else if (isNaN(costPrice) || costPrice <= 0) _error = 'Invalid cost price'
+          else if (isNaN(costPrice) || costPrice < 0) _error = 'Invalid cost price'
           else if (isNaN(inStock) || inStock < 0) _error = 'Invalid stock'
 
           return {
@@ -359,56 +362,78 @@ export default function Stock() {
     reader.readAsArrayBuffer(file)
   }
 
+  const BATCH_SIZE = 490  // Firestore max is 500 writes per batch; stay under
+
   const confirmImport = async () => {
     if (!appUser) return
     const validRows = importRows.filter((r) => r._valid)
     if (validRows.length === 0) { toast.error('No valid rows to import'); return }
-    // Hard cap at 490 to ensure the whole import fits in a single Firestore batch.
-    // This prevents partial-import corruption where batch 1 commits but batch 2 fails.
-    if (validRows.length > 490) {
-      toast.error(`Too many rows — maximum 490 per import (file has ${validRows.length} valid rows). Split into smaller files.`)
+    if (validRows.length > 5000) {
+      toast.error(`File has ${validRows.length} valid rows — maximum supported is 5,000. Split the file.`)
       return
     }
+
     setImporting(true)
+
+    // Chunk rows into batches of BATCH_SIZE and commit sequentially.
+    // Each batch is atomic within itself; a failure mid-way will show progress
+    // so the user knows exactly how many rows were committed before the error.
+    const chunks: ImportRow[][] = []
+    for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
+      chunks.push(validRows.slice(i, i + BATCH_SIZE))
+    }
+
+    let committed = 0
+    setImportProgress({ done: 0, total: validRows.length })
+
     try {
-      // Single atomic batch — all books commit together or none do
-      const batch = writeBatch(db)
-      validRows.forEach((row) => {
-        const ref = doc(collection(db, 'books'))
-        batch.set(ref, {
-          name: row.name,
-          author: row.author,
-          isbn: row.isbn ?? '',
-          language: row.language,
-          category: row.category,
-          publisher: row.publisher ?? '',
-          mrp: row.mrp,
-          costPrice: row.costPrice,
-          inStock: row.inStock,
-          minStockAlert: row.minStockAlert,
-          description: row.description ?? '',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-          createdBy: appUser.uid,
+      for (const chunk of chunks) {
+        const batch = writeBatch(db)
+        chunk.forEach((row) => {
+          const ref = doc(collection(db, 'books'))
+          batch.set(ref, {
+            name: row.name,
+            author: row.author ?? '',
+            isbn: row.isbn ?? '',
+            language: row.language,
+            category: row.category,
+            publisher: row.publisher ?? '',
+            mrp: row.mrp,
+            costPrice: row.costPrice ?? 0,
+            inStock: row.inStock,
+            minStockAlert: row.minStockAlert,
+            description: row.description ?? '',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            createdBy: appUser.uid,
+          })
         })
-      })
-      await batch.commit()
+        await batch.commit()
+        committed += chunk.length
+        setImportProgress({ done: committed, total: validRows.length })
+      }
+
       // Single audit log summarising the whole import
       await writeAuditLog({
         action: 'book_created',
         entity: 'book',
-        details: `Bulk imported ${validRows.length} book${validRows.length !== 1 ? 's' : ''} via CSV/Excel`,
+        details: `Bulk imported ${committed} book${committed !== 1 ? 's' : ''} via CSV/Excel`,
         performedBy: appUser.uid,
         performedByName: appUser.displayName,
         role: appUser.role,
       })
-      toast.success(`Imported ${validRows.length} book${validRows.length !== 1 ? 's' : ''} successfully`)
+      toast.success(`Imported ${committed} book${committed !== 1 ? 's' : ''} successfully`)
       setModalType(null)
       setImportRows([])
-    } catch {
-      toast.error('Import failed. Please check your data and try again.')
+    } catch (e) {
+      const msg = committed > 0
+        ? `Import failed after ${committed} of ${validRows.length} rows. The committed rows are saved. Re-import the remaining rows.`
+        : 'Import failed. No rows were saved. Check your data and try again.'
+      toast.error(msg, { duration: 6000 })
+      console.error('[import]', e)
     } finally {
       setImporting(false)
+      setImportProgress(null)
     }
   }
 
@@ -518,7 +543,7 @@ export default function Stock() {
 
   const exportBooks = () => {
     const rows = filtered.map((b) => [
-      b.name, b.author, b.isbn ?? '', b.language ?? '', b.category, b.publisher ?? '',
+      b.name, b.author ?? '', b.isbn ?? '', b.language ?? '', b.category, b.publisher ?? '',
       b.mrp, b.costPrice, b.inStock, b.minStockAlert, b.description ?? '',
     ])
     downloadCSV(
@@ -533,7 +558,7 @@ export default function Stock() {
 
   const filtered = books.filter((b) => {
     const q = search.toLowerCase()
-    const matchSearch = !q || b.name.toLowerCase().includes(q) || b.author.toLowerCase().includes(q) || (b.isbn ?? '').includes(q)
+    const matchSearch = !q || b.name.toLowerCase().includes(q) || (b.author ?? '').toLowerCase().includes(q) || (b.isbn ?? '').includes(q)
     const matchCat = !categoryFilter || b.category === categoryFilter
     const matchLang = !languageFilter || b.language === languageFilter
     return matchSearch && matchCat && matchLang
@@ -876,8 +901,7 @@ export default function Stock() {
               {...bookForm.register('name')}
             />
             <Input
-              label="Author *"
-              error={bookForm.formState.errors.author?.message}
+              label="Author"
               {...bookForm.register('author')}
             />
             <Input label="ISBN" {...bookForm.register('isbn')} />
@@ -906,9 +930,10 @@ export default function Stock() {
               {...bookForm.register('mrp')}
             />
             <Input
-              label="Cost Price (Rs.) *"
+              label="Cost Price (Rs.)"
               type="number"
               step="0.01"
+              hint="Leave 0 if unknown"
               error={bookForm.formState.errors.costPrice?.message}
               {...bookForm.register('costPrice')}
             />
@@ -1093,8 +1118,24 @@ export default function Stock() {
               </div>
             )}
 
+            {/* Progress bar — visible while importing large files */}
+            {importProgress && (
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-xs text-gray-500">
+                  <span>Importing…</span>
+                  <span>{importProgress.done} / {importProgress.total}</span>
+                </div>
+                <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-brand-500 transition-all duration-300"
+                    style={{ width: `${Math.round((importProgress.done / importProgress.total) * 100)}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
             <div className="flex justify-end gap-3 pt-1">
-              <Button variant="outline" onClick={() => { setModalType(null); setImportRows([]) }}>Cancel</Button>
+              <Button variant="outline" disabled={importing} onClick={() => { setModalType(null); setImportRows([]) }}>Cancel</Button>
               <Button
                 onClick={confirmImport}
                 loading={importing}
