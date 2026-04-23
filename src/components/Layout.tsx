@@ -27,7 +27,7 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { to: '/stock',    label: 'Stock',    icon: <Package className="h-5 w-5" />,      roles: ['superadmin', 'admin'] },
+  { to: '/stock',    label: 'Stock',    icon: <Package className="h-5 w-5" />,      roles: ['superadmin', 'admin', 'cashier'] },
   { to: '/pos',      label: 'POS',      icon: <ShoppingCart className="h-5 w-5" />, roles: ['superadmin', 'admin', 'cashier'] },
   { to: '/discounts',label: 'Discounts',icon: <Tag className="h-5 w-5" />,          roles: ['superadmin', 'admin'] },
   { to: '/admin',    label: 'Analytics',icon: <BarChart2 className="h-5 w-5" />,    roles: ['superadmin'] },

@@ -11,7 +11,7 @@ function dtStr(ts: { toDate: () => Date } | null | undefined) {
     '  ' + d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
 }
 
-export function printReceipt(sale: Sale) {
+function buildReceiptHtml(sale: Sale, logoUrl: string, autoPrint: boolean): string {
   const items = sale.items.map((i) => `
     <tr>
       <td>${i.bookName}</td>
@@ -21,7 +21,7 @@ export function printReceipt(sale: Sale) {
       <td class="r">${fmt(i.subtotal)}</td>
     </tr>`).join('')
 
-  const html = `<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
@@ -29,11 +29,8 @@ export function printReceipt(sale: Sale) {
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{font-family:'Courier New',monospace;font-size:11px;max-width:300px;margin:0 auto;padding:12px;color:#111}
-  .logo{text-align:center;margin-bottom:10px}
-  .logo-name{font-family:Arial,sans-serif;font-size:20px;font-weight:900;letter-spacing:-1px}
-  .logo-name span:first-child{color:#f37023}
-  .logo-name span:last-child{color:#9c090e}
-  .logo-sub{font-family:Arial,sans-serif;font-size:9px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:#444;margin-top:1px}
+  .logo{text-align:center;margin-bottom:8px}
+  .logo img{max-width:160px;height:auto;display:block;margin:0 auto}
   hr{border:none;border-top:1px dashed #999;margin:7px 0}
   .row{display:flex;justify-content:space-between;margin:2px 0}
   .label{color:#666}
@@ -44,13 +41,13 @@ export function printReceipt(sale: Sale) {
   .total-row{display:flex;justify-content:space-between;margin:2px 0;font-size:11px}
   .grand{display:flex;justify-content:space-between;font-size:14px;font-weight:700;border-top:2px solid #111;margin-top:5px;padding-top:5px}
   .footer{text-align:center;margin-top:12px;font-size:9px;color:#888;line-height:1.6}
-  @media print{@page{margin:4mm}body{max-width:100%}}
+  .print-btn{display:block;width:100%;margin-top:14px;padding:8px;background:#f37023;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer}
+  @media print{@page{margin:4mm}body{max-width:100%}.print-btn{display:none}}
 </style>
 </head>
 <body>
 <div class="logo">
-  <div class="logo-name"><span>nepa~</span><span>laya</span></div>
-  <div class="logo-sub">Books</div>
+  <img src="${logoUrl}" alt="Nepalaya Books" />
 </div>
 <hr>
 <div class="row"><span class="label">Receipt</span><span>#${sale.id.slice(-8).toUpperCase()}</span></div>
@@ -80,12 +77,32 @@ ${sale.notes ? `<div class="row"><span class="label">Note</span><span>${sale.not
   Thank you for shopping at Nepalaya Books!<br>
   Exchange within 7 days with receipt.
 </div>
-<script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1000)}</script>
+${autoPrint
+  ? `<script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1200)}<\/script>`
+  : `<button class="print-btn" onclick="window.print()">🖨️ Print / Save as PDF</button>`
+}
 </body>
 </html>`
+}
 
-  const w = window.open('', '_blank', 'width=380,height=600,toolbar=0,menubar=0')
-  if (!w) { alert('Allow popups to print receipt'); return }
+function openReceiptWindow(html: string): void {
+  const w = window.open('', '_blank', 'width=400,height=650,toolbar=0,menubar=0,scrollbars=1')
+  if (!w) { alert('Allow popups to print receipts'); return }
   w.document.write(html)
   w.document.close()
+}
+
+/** Opens receipt and immediately triggers the browser print dialog. */
+export function printReceipt(sale: Sale): void {
+  const logoUrl = `${window.location.origin}/logo.svg`
+  openReceiptWindow(buildReceiptHtml(sale, logoUrl, true))
+}
+
+/**
+ * Opens the receipt in a preview window with a visible Print button.
+ * Use this for reprints so the cashier can decide when to print or save as PDF.
+ */
+export function openReceiptPreview(sale: Sale): void {
+  const logoUrl = `${window.location.origin}/logo.svg`
+  openReceiptWindow(buildReceiptHtml(sale, logoUrl, false))
 }

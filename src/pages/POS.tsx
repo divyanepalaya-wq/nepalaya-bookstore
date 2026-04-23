@@ -13,7 +13,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useBooks } from '@/contexts/BooksContext'
 import { writeAuditLog } from '@/lib/auditLog'
 import { formatCurrency, cn } from '@/lib/utils'
-import { printReceipt } from '@/lib/receipt'
+import { printReceipt, openReceiptPreview } from '@/lib/receipt'
 import { updateDailyAnalytics } from '@/lib/analyticsAgg'
 import type { Book, Customer, CartItem, PaymentMethod, Discount, Sale } from '@/types'
 import { Button } from '@/components/ui/Button'
@@ -648,7 +648,17 @@ export default function POS() {
             <h1 className="text-xl font-bold text-gray-900">Point of Sale</h1>
             <p className="text-sm text-gray-500">Search and add books to the cart</p>
           </div>
-          <div className="flex gap-2 shrink-0">
+          <div className="flex gap-2 shrink-0 flex-wrap justify-end">
+            {lastSaleData && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => openReceiptPreview(lastSaleData)}
+                title="Reprint last receipt"
+              >
+                <Printer className="h-4 w-4" /> Last Receipt
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={() => { setSelectedReturnSale(null); setReturnResults([]); setReturnPhoneSearch(''); setReturnModalOpen(true) }}>
               <RotateCcw className="h-4 w-4" /> Return
             </Button>

@@ -34,7 +34,7 @@ function App() {
           <Route
             path="/stock"
             element={
-              <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
+              <ProtectedRoute allowedRoles={['superadmin', 'admin', 'cashier']}>
                 <Layout>
                   <Stock />
                 </Layout>
