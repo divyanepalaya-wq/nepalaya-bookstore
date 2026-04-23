@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import {
   collection, onSnapshot, getDocs, getDoc, query, orderBy,
   doc, setDoc, updateDoc, serverTimestamp, limit, startAfter, runTransaction, increment,
-  type QueryDocumentSnapshot,
+  type QueryDocumentSnapshot, type Query, type DocumentData,
 } from 'firebase/firestore'
 import type { DailyAnalytics } from '@/lib/analyticsAgg'
 
@@ -13,7 +13,7 @@ import toast from 'react-hot-toast'
 import {
   BarChart2, Users, Receipt, FileText, BookOpen, Package,
   TrendingUp, AlertTriangle, Plus, Search, UserX, UserCheck,
-  ShoppingBag, DollarSign, Download, Printer, RotateCcw, Minus,
+  ShoppingBag, DollarSign, Download, Printer, RotateCcw, Minus, RefreshCw,
 } from 'lucide-react'
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis,
@@ -177,6 +177,95 @@ export default function SuperAdmin() {
       setHasMoreAudit(snap.docs.length === 20)
     } finally {
       setLoadingMoreAudit(false)
+    }
+  }
+
+  // ─── Analytics backfill ────────────────────────────────────────────────────
+  // One-time operation: reads all historical sales and writes correct analytics
+  // docs from scratch so data exists before the live aggregation was deployed.
+
+  const [backfillState, setBackfillState] = useState<
+    null | { phase: 'loading'; loaded: number } | { phase: 'writing'; done: number; total: number } | { phase: 'done' }
+  >(null)
+
+  const runBackfill = async () => {
+    if (!appUser) return
+    setBackfillState({ phase: 'loading', loaded: 0 })
+    try {
+      // 1. Load every sale — paginate in chunks of 500
+      const allSales: Sale[] = []
+      let cursor: QueryDocumentSnapshot | null = null
+      while (true) {
+        const salesCol = collection(db, 'sales')
+        const salesQ: Query<DocumentData> = cursor
+          ? query(salesCol, orderBy('createdAt', 'asc'), startAfter(cursor), limit(500))
+          : query(salesCol, orderBy('createdAt', 'asc'), limit(500))
+        // eslint-disable-next-line no-await-in-loop
+        const snap = await getDocs(salesQ)
+        allSales.push(...snap.docs.map((d: QueryDocumentSnapshot) => ({ id: d.id, ...d.data() }) as Sale))
+        setBackfillState({ phase: 'loading', loaded: allSales.length })
+        if (snap.docs.length < 500) break
+        cursor = snap.docs[snap.docs.length - 1]
+      }
+
+      // 2. Aggregate completed sales by day — compute full analytics client-side
+      const dayMap: Record<string, DailyAnalytics> = {}
+      allSales
+        .filter((s) => s.status === 'completed')
+        .forEach((sale) => {
+          if (!sale.createdAt) return
+          let saleDate: Date
+          try { saleDate = sale.createdAt.toDate() } catch { return }
+          const dateStr = format(saleDate, 'yyyy-MM-dd')
+          const hourKey = String(saleDate.getHours())
+
+          if (!dayMap[dateStr]) {
+            dayMap[dateStr] = {
+              date: dateStr, totalRevenue: 0, saleCount: 0,
+              cashRevenue: 0, cashSaleCount: 0,
+              hourlyRevenue: {}, hourlyCount: {}, topBooks: {}, paymentMethods: {},
+            }
+          }
+          const day = dayMap[dateStr]
+          day.totalRevenue  += sale.grandTotal
+          day.saleCount     += 1
+          if (sale.paymentMethod === 'cash') {
+            day.cashRevenue  += sale.grandTotal
+            day.cashSaleCount += 1
+          }
+          day.hourlyRevenue[hourKey] = (day.hourlyRevenue[hourKey] ?? 0) + sale.grandTotal
+          day.hourlyCount[hourKey]   = (day.hourlyCount[hourKey]   ?? 0) + 1
+
+          const pm = sale.paymentMethod
+          if (!day.paymentMethods[pm]) day.paymentMethods[pm] = { count: 0, revenue: 0 }
+          day.paymentMethods[pm].count   += 1
+          day.paymentMethods[pm].revenue += sale.grandTotal
+
+          sale.items.forEach((item) => {
+            if (!day.topBooks[item.bookId]) day.topBooks[item.bookId] = { name: item.bookName, qty: 0, revenue: 0 }
+            day.topBooks[item.bookId].qty     += item.quantity
+            day.topBooks[item.bookId].revenue += item.subtotal
+          })
+        })
+
+      // 3. Write each day's doc — full overwrite for accuracy
+      const dates = Object.keys(dayMap)
+      for (let i = 0; i < dates.length; i++) {
+        setBackfillState({ phase: 'writing', done: i, total: dates.length })
+        await setDoc(doc(db, 'analytics', dates[i]), dayMap[dates[i]])
+      }
+
+      // 4. Reload analytics into local state
+      const last30Dates = Array.from({ length: 30 }, (_, i) => format(subDays(new Date(), i), 'yyyy-MM-dd'))
+      const refreshed = await Promise.all(last30Dates.map((d) => getDoc(doc(db, 'analytics', d))))
+      setAnalyticsDocs(refreshed.filter((s) => s.exists()).map((s) => s.data() as DailyAnalytics))
+
+      setBackfillState({ phase: 'done' })
+      toast.success(`Analytics rebuilt from ${allSales.length} sales across ${dates.length} days`)
+    } catch (e) {
+      toast.error('Backfill failed — see console for details')
+      console.error('[backfill]', e)
+      setBackfillState(null)
     }
   }
 
@@ -553,6 +642,40 @@ export default function SuperAdmin() {
       {/* ── ANALYTICS TAB ── */}
       {activeTab === 'analytics' && (
         <div className="space-y-6">
+
+          {/* Backfill banner */}
+          <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-blue-800">Analytics data missing or outdated?</p>
+              <p className="text-xs text-blue-600 mt-0.5">
+                Run a one-time rebuild to compute analytics from all historical sales.
+                {backfillState?.phase === 'loading' && ` Loading sales… ${backfillState.loaded} so far`}
+                {backfillState?.phase === 'writing' && ` Writing ${backfillState.done}/${backfillState.total} days…`}
+                {backfillState?.phase === 'done'    && ' ✓ Done — analytics are up to date.'}
+              </p>
+              {(backfillState?.phase === 'loading' || backfillState?.phase === 'writing') && (
+                <div className="mt-2 h-1.5 rounded-full bg-blue-200 overflow-hidden w-48">
+                  <div
+                    className="h-full rounded-full bg-blue-500 transition-all duration-300"
+                    style={{
+                      width: backfillState.phase === 'writing'
+                        ? `${Math.round((backfillState.done / backfillState.total) * 100)}%`
+                        : '100%',
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+            <button
+              onClick={runBackfill}
+              disabled={backfillState?.phase === 'loading' || backfillState?.phase === 'writing'}
+              className="flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${(backfillState?.phase === 'loading' || backfillState?.phase === 'writing') ? 'animate-spin' : ''}`} />
+              {backfillState?.phase === 'done' ? 'Rebuild Again' : 'Rebuild Analytics'}
+            </button>
+          </div>
+
           {/* Stat cards */}
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard
