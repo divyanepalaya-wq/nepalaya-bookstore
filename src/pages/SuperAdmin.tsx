@@ -22,6 +22,7 @@ import {
 import { format, subDays } from 'date-fns'
 import { db, createUserViaRest } from '@/lib/firebase'
 import { printReceipt } from '@/lib/receipt'
+import { reverseDailyAnalytics } from '@/lib/analyticsAgg'
 import { useAuth } from '@/contexts/AuthContext'
 import { useBooks } from '@/contexts/BooksContext'
 import { writeAuditLog } from '@/lib/auditLog'
@@ -323,6 +324,21 @@ export default function SuperAdmin() {
         performedByName: appUser.displayName,
         role: appUser.role,
       })
+      // Subtract this sale's numbers from the daily analytics doc so voided
+      // sales are never counted in revenue/charts
+      if (voidModal.createdAt) {
+        reverseDailyAnalytics({
+          grandTotal:    voidModal.grandTotal,
+          paymentMethod: voidModal.paymentMethod,
+          items:         voidModal.items.map((i) => ({
+            bookId:   i.bookId,
+            bookName: i.bookName,
+            quantity: i.quantity,
+            subtotal: i.subtotal,
+          })),
+          saleCreatedAt: voidModal.createdAt,
+        })
+      }
       // Update local state without re-fetching
       setSales((prev) => prev.map((s) =>
         s.id === voidModal.id ? { ...s, status: 'voided', voidReason: voidReason.trim() } : s
