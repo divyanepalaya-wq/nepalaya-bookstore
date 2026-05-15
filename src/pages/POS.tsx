@@ -450,7 +450,6 @@ export default function POS() {
     if (!appUser) return
     if (cart.length === 0) { toast.error('Cart is empty'); return }
     if (!customerName.trim()) { toast.error('Customer name is required'); return }
-    if (!customerPhone.trim()) { toast.error('Customer phone is required'); return }
 
     // For cash: validate the entered amount. For all other methods: record exact total as paid.
     const paid = paymentMethod === 'cash'
@@ -514,38 +513,43 @@ export default function POS() {
         })
       })
 
-      // Upsert customer — phone is the document ID (prevents duplicates).
-      // Check against already-loaded local state — no extra Firestore read needed.
-      const customerRef = doc(db, 'customers', customerPhone)
-      const isNewCustomer = !allCustomers.some((c) => c.phone === customerPhone)
-      if (isNewCustomer) {
-        await setDoc(customerRef, {
-          name: customerName,
-          phone: customerPhone,
-          email: '',
-          totalPurchases: 1,
-          totalSpent: grandTotal,
-          createdAt: serverTimestamp(),
-          lastPurchaseAt: serverTimestamp(),
-        })
-        await writeAuditLog({
-          action: 'customer_created',
-          entity: 'customer',
-          details: `New customer: ${customerName} (${customerPhone})`,
-          performedBy: appUser.uid,
-          performedByName: appUser.displayName,
-          role: appUser.role,
-        })
-      } else {
-        await updateDoc(customerRef, {
-          name: customerName,
-          totalPurchases: increment(1),
-          totalSpent: increment(grandTotal),
-          lastPurchaseAt: serverTimestamp(),
-        })
+      // Upsert customer only when a phone number was provided.
+      // Phone is the document ID so it's the unique key — walk-in / anonymous
+      // sales (no phone) are recorded without a linked customer doc.
+      const hasPhone = customerPhone.trim().length > 0
+      let isNewCustomer = false
+      if (hasPhone) {
+        const customerRef = doc(db, 'customers', customerPhone)
+        isNewCustomer = !allCustomers.some((c) => c.phone === customerPhone)
+        if (isNewCustomer) {
+          await setDoc(customerRef, {
+            name: customerName,
+            phone: customerPhone,
+            email: '',
+            totalPurchases: 1,
+            totalSpent: grandTotal,
+            createdAt: serverTimestamp(),
+            lastPurchaseAt: serverTimestamp(),
+          })
+          await writeAuditLog({
+            action: 'customer_created',
+            entity: 'customer',
+            details: `New customer: ${customerName} (${customerPhone})`,
+            performedBy: appUser.uid,
+            performedByName: appUser.displayName,
+            role: appUser.role,
+          })
+        } else {
+          await updateDoc(customerRef, {
+            name: customerName,
+            totalPurchases: increment(1),
+            totalSpent: increment(grandTotal),
+            lastPurchaseAt: serverTimestamp(),
+          })
+        }
       }
-      // Phone is always the document ID — use it as the resolved customer ID
-      const resolvedCustomerId = customerPhone
+      // Use phone as customer ID only when provided
+      const resolvedCustomerId = hasPhone ? customerPhone : null
 
       // Create sale record
       const saleRef = await addDoc(collection(db, 'sales'), {
@@ -605,19 +609,21 @@ export default function POS() {
       setSuccessModalOpen(true)
       clearCart()
 
-      // Update local customer list without a Firestore read
-      setAllCustomers((prev) => {
-        if (isNewCustomer) {
-          return [...prev, {
-            id: customerPhone, name: customerName, phone: customerPhone,
-            email: '', totalPurchases: 1, totalSpent: grandTotal,
-          } as Customer]
-        }
-        return prev.map((c) => c.phone === customerPhone
-          ? { ...c, name: customerName, totalPurchases: c.totalPurchases + 1, totalSpent: c.totalSpent + grandTotal }
-          : c
-        )
-      })
+      // Update local customer list without a Firestore read (only when phone was given)
+      if (hasPhone) {
+        setAllCustomers((prev) => {
+          if (isNewCustomer) {
+            return [...prev, {
+              id: customerPhone, name: customerName, phone: customerPhone,
+              email: '', totalPurchases: 1, totalSpent: grandTotal,
+            } as Customer]
+          }
+          return prev.map((c) => c.phone === customerPhone
+            ? { ...c, name: customerName, totalPurchases: c.totalPurchases + 1, totalSpent: c.totalSpent + grandTotal }
+            : c
+          )
+        })
+      }
 
       // Fire-and-forget analytics update (errors are swallowed inside the helper)
       updateDailyAnalytics({ grandTotal, paymentMethod, items: saleItems })
@@ -773,7 +779,7 @@ export default function POS() {
               ref={phoneRef}
               value={customerPhone}
               onChange={(e) => handlePhoneChange(e.target.value)}
-              placeholder="Phone *"
+              placeholder="Phone (optional)"
               className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
             <input
