@@ -1,18 +1,13 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
-import {
-  signInWithEmailAndPassword,
-  signOut as firebaseSignOut,
-  onAuthStateChanged,
-  type User as FirebaseUser,
-} from 'firebase/auth'
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore'
-import { auth, db } from '@/lib/firebase'
-import type { AppUser } from '@/types'
+import type { User as SupabaseUser, Session } from '@supabase/supabase-js'
+import { supabase } from '@/lib/supabase'
+import { mapProfile } from '@/lib/mappers'
 import { writeAuditLog } from '@/lib/auditLog'
-import { getFirebaseErrorMessage } from '@/lib/firebaseErrors'
+import type { AppUser } from '@/types'
 
 interface AuthContextValue {
-  user: FirebaseUser | null
+  user: SupabaseUser | null
+  session: Session | null
   appUser: AppUser | null
   loading: boolean
   signIn: (email: string, password: string) => Promise<void>
@@ -21,41 +16,72 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
+async function loadProfile(uid: string): Promise<AppUser | null> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', uid)
+    .maybeSingle()
+  if (error || !data) return null
+  return mapProfile(data as Parameters<typeof mapProfile>[0])
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<FirebaseUser | null>(null)
+  const [user, setUser] = useState<SupabaseUser | null>(null)
+  const [session, setSession] = useState<Session | null>(null)
   const [appUser, setAppUser] = useState<AppUser | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
-      setUser(firebaseUser)
-      if (firebaseUser) {
-        const snap = await getDoc(doc(db, 'users', firebaseUser.uid))
-        if (snap.exists()) {
-          setAppUser({ uid: firebaseUser.uid, ...snap.data() } as AppUser)
-        } else {
-          setAppUser(null)
-        }
-      } else {
+    let mounted = true
+
+    const applySession = async (nextSession: Session | null) => {
+      if (!mounted) return
+      setSession(nextSession)
+      setUser(nextSession?.user ?? null)
+      if (!nextSession?.user) {
         setAppUser(null)
+        return
       }
-      setLoading(false)
+      const profile = await loadProfile(nextSession.user.id)
+      if (!profile || profile.isActive !== true) {
+        await supabase.auth.signOut()
+        if (!mounted) return
+        setSession(null)
+        setUser(null)
+        setAppUser(null)
+        return
+      }
+      setAppUser(profile)
+    }
+
+    supabase.auth.getSession().then(async ({ data }) => {
+      await applySession(data.session)
+      if (mounted) setLoading(false)
     })
-    return unsub
+
+    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, nextSession) => {
+      await applySession(nextSession)
+      if (mounted) setLoading(false)
+    })
+
+    return () => {
+      mounted = false
+      sub.subscription.unsubscribe()
+    }
   }, [])
 
   const signIn = async (email: string, password: string) => {
-    let cred
-    try {
-      cred = await signInWithEmailAndPassword(auth, email, password)
-    } catch (e) {
-      throw new Error(getFirebaseErrorMessage(e))
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) throw new Error(error.message)
+    if (!data.user) throw new Error('Sign in failed')
+
+    const profile = await loadProfile(data.user.id)
+    if (!profile) throw new Error('User profile not found. Contact your administrator.')
+    if (profile.isActive !== true) {
+      await supabase.auth.signOut()
+      throw new Error('Your account has been deactivated. Contact your administrator.')
     }
-    const snap = await getDoc(doc(db, 'users', cred.user.uid))
-    if (!snap.exists()) throw new Error('User profile not found. Contact your administrator.')
-    const profile = { uid: cred.user.uid, ...snap.data() } as AppUser
-    // Explicit check — treats missing isActive field the same as false
-    if (profile.isActive !== true) throw new Error('Your account has been deactivated. Contact your administrator.')
     setAppUser(profile)
     await writeAuditLog({
       action: 'login',
@@ -78,29 +104,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         role: appUser.role,
       })
     }
-    await firebaseSignOut(auth)
+    await supabase.auth.signOut()
     setAppUser(null)
+    setUser(null)
+    setSession(null)
   }
 
-  // Dev-only one-time setup helper — stripped in production builds
+  // Dev helper: promote current user to superadmin (SQL usually preferred)
   useEffect(() => {
     if (import.meta.env.DEV) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(window as any).__setupSuperAdmin = async (uid: string, email: string, name: string) => {
-        await setDoc(doc(db, 'users', uid), {
-          email,
-          displayName: name,
+      ;(window as any).__setupSuperAdmin = async (displayName?: string) => {
+        const { data: { user: u } } = await supabase.auth.getUser()
+        if (!u) throw new Error('Sign in first')
+        const { error } = await supabase.from('profiles').upsert({
+          id: u.id,
+          email: u.email ?? '',
+          display_name: displayName ?? u.email?.split('@')[0] ?? 'Admin',
           role: 'superadmin',
-          isActive: true,
-          createdAt: serverTimestamp(),
+          is_active: true,
         })
-        console.info('[Dev] Superadmin profile created for', uid)
+        if (error) throw error
+        console.info('[Dev] Superadmin profile upserted for', u.id)
       }
     }
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, appUser, loading, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, session, appUser, loading, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   )

@@ -1,21 +1,21 @@
 import { useState, useEffect, useRef } from 'react'
-import {
-  collection, query, where, runTransaction, Timestamp,
-  doc, addDoc, updateDoc, setDoc, getDocs, serverTimestamp, increment,
-} from 'firebase/firestore'
 import toast from 'react-hot-toast'
 import {
   Search, ShoppingCart, Trash2, Plus, Minus, UserSearch,
   X, CheckCircle, Receipt, Tag, AlertCircle, Printer, RotateCcw, Clock,
 } from 'lucide-react'
-import { db } from '@/lib/firebase'
+import { supabase } from '@/lib/supabase'
+import { mapCustomer, mapDiscount, mapSale, mapSaleItem } from '@/lib/mappers'
 import { useAuth } from '@/contexts/AuthContext'
 import { useBooks } from '@/contexts/BooksContext'
+import { useWarehouse } from '@/contexts/WarehouseContext'
 import { writeAuditLog } from '@/lib/auditLog'
 import { formatCurrency, cn } from '@/lib/utils'
 import { printReceipt, openReceiptPreview } from '@/lib/receipt'
 import { updateDailyAnalytics } from '@/lib/analyticsAgg'
-import type { Book, Customer, CartItem, PaymentMethod, Discount, Sale } from '@/types'
+import { returnSaleItems } from '@/lib/inventoryService'
+import { newRequestId, opsErrorMessage } from '@/lib/opsErrors'
+import type { Book, Customer, CartItem, PaymentMethod, Discount, Sale, SaleItem } from '@/types'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
@@ -34,6 +34,7 @@ const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
 export default function POS() {
   const { appUser } = useAuth()
   const { books } = useBooks()
+  const { bookstoreId, getRetailStock } = useWarehouse()
 
   // Books
   const [bookSearch, setBookSearch] = useState('')
@@ -42,13 +43,16 @@ export default function POS() {
   const [cart, setCart] = useState<CartItem[]>([])
   const [orderDiscountPercent, setOrderDiscountPercent] = useState(0)
 
-  // Customer
+  // Customer — walk-in by default for fast till use
   const [customerPhone, setCustomerPhone] = useState('')
-  const [customerName, setCustomerName] = useState('')
+  const [customerName, setCustomerName] = useState('Walk-in')
   const [customerId, setCustomerId] = useState<string | null>(null)
   const [allCustomers, setAllCustomers] = useState<Customer[]>([])
   const [customerSuggestions, setCustomerSuggestions] = useState<Customer[]>([])
   const [showSuggestions, setShowSuggestions] = useState(false)
+  const [customerOpen, setCustomerOpen] = useState(false)
+  const [showInStockOnly, setShowInStockOnly] = useState(true)
+  const [showLineDiscounts, setShowLineDiscounts] = useState(false)
 
   // Discounts (saved)
   const [discounts, setDiscounts] = useState<Discount[]>([])
@@ -90,15 +94,21 @@ export default function POS() {
   const [returnSubmitting, setReturnSubmitting] = useState(false)
 
   const phoneRef = useRef<HTMLInputElement>(null)
+  const bookSearchRef = useRef<HTMLInputElement>(null)
 
-  // Sync cart maxStock whenever live books update (BooksContext keeps books fresh)
+  useEffect(() => {
+    bookSearchRef.current?.focus()
+  }, [])
+
+  // Sync cart maxStock whenever live retail stock updates
   useEffect(() => {
     setCart((prev) => prev.map((item) => {
       const live = books.find((b) => b.id === item.bookId)
       if (!live) return item
-      return { ...item, maxStock: live.inStock, quantity: Math.min(item.quantity, live.inStock) }
+      const stock = getRetailStock(live.id, live.inStock)
+      return { ...item, maxStock: stock, quantity: Math.min(item.quantity, stock) }
     }))
-  }, [books])
+  }, [books, getRetailStock])
 
   // Auto-close success modal with countdown
   useEffect(() => {
@@ -115,16 +125,25 @@ export default function POS() {
 
   // Load discounts once (they rarely change, no need for live listener)
   useEffect(() => {
-    getDocs(query(collection(db, 'discounts'), where('isActive', '==', true)))
-      .then((snap) => setDiscounts(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Discount)))
-      .catch(() => console.warn('Failed to load discounts'))
+    supabase
+      .from('discounts')
+      .select('*')
+      .eq('is_active', true)
+      .then(({ data, error }) => {
+        if (error) { console.warn('Failed to load discounts'); return }
+        setDiscounts((data ?? []).map((r) => mapDiscount(r as Record<string, unknown>)))
+      })
   }, [])
 
-  // Load all customers once for client-side search (far fewer Firestore reads)
+  // Load all customers once for client-side search (far fewer reads)
   useEffect(() => {
-    getDocs(collection(db, 'customers'))
-      .then((snap) => setAllCustomers(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Customer)))
-      .catch(() => {/* silently ignore */})
+    supabase
+      .from('customers')
+      .select('*')
+      .then(({ data, error }) => {
+        if (error) return
+        setAllCustomers((data ?? []).map((r) => mapCustomer(r as Record<string, unknown>)))
+      })
   }, [])
 
   const [customerSearch, setCustomerSearch] = useState('')
@@ -173,12 +192,13 @@ export default function POS() {
   // ─── Cart operations ───────────────────────────────────────────────────────
 
   const addToCart = (book: Book) => {
-    if (book.inStock === 0) { toast.error('Out of stock'); return }
+    const stock = getRetailStock(book.id, book.inStock)
+    if (stock === 0) { toast.error('Out of stock'); return }
     setCart((prev) => {
       const existing = prev.find((i) => i.bookId === book.id)
       if (existing) {
-        if (existing.quantity >= book.inStock) { toast.error('Max stock reached'); return prev }
-        return prev.map((i) => i.bookId === book.id ? { ...i, quantity: i.quantity + 1 } : i)
+        if (existing.quantity >= stock) { toast.error('Max stock reached'); return prev }
+        return prev.map((i) => i.bookId === book.id ? { ...i, quantity: i.quantity + 1, maxStock: stock } : i)
       }
       return [...prev, {
         bookId: book.id,
@@ -186,7 +206,7 @@ export default function POS() {
         unitPrice: book.mrp,
         quantity: 1,
         discountPercent: 0,
-        maxStock: book.inStock,
+        maxStock: stock,
       }]
     })
   }
@@ -211,13 +231,15 @@ export default function POS() {
   const clearCart = () => {
     setCart([])
     setCustomerPhone('')
-    setCustomerName('')
+    setCustomerName('Walk-in')
     setCustomerId(null)
     setCustomerSearch('')
+    setCustomerOpen(false)
     setOrderDiscountPercent(0)
     setAmountPaid('')
     setNotes('')
     setPaymentMethod('cash')
+    setTimeout(() => bookSearchRef.current?.focus(), 50)
   }
 
   // ─── Shift close ──────────────────────────────────────────────────────────
@@ -229,21 +251,22 @@ export default function POS() {
     setShiftStats(null)
     let active = true   // guard against stale setState if modal is closed while loading
     try {
-      const snap = await getDocs(query(
-        collection(db, 'sales'),
-        where('cashierId', '==', appUser.uid),
-      ))
-      if (!active) return
       const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0)
-      const todaySales = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() }) as Sale)
-        .filter((s) => s.status === 'completed' && s.createdAt && s.createdAt.toDate() >= dayStart)
-      const cashSales = todaySales.filter((s) => s.paymentMethod === 'cash')
+      const { data, error } = await supabase
+        .from('sales')
+        .select('*')
+        .eq('cashier_id', appUser.uid)
+        .eq('status', 'completed')
+        .gte('created_at', dayStart.toISOString())
+      if (!active) return
+      if (error) throw new Error(error.message)
+      const rows = (data ?? []) as Array<Record<string, unknown>>
+      const cashRows = rows.filter((r) => r.payment_method === 'cash')
       setShiftStats({
-        saleCount: todaySales.length,
-        totalRevenue: todaySales.reduce((sum, s) => sum + s.grandTotal, 0),
-        cashRevenue: cashSales.reduce((sum, s) => sum + s.grandTotal, 0),
-        cashSaleCount: cashSales.length,
+        saleCount: rows.length,
+        totalRevenue: rows.reduce((sum, r) => sum + Number(r.grand_total ?? 0), 0),
+        cashRevenue: cashRows.reduce((sum, r) => sum + Number(r.grand_total ?? 0), 0),
+        cashSaleCount: cashRows.length,
       })
     } catch {
       if (active) toast.error('Could not load today\'s sales data')
@@ -259,22 +282,26 @@ export default function POS() {
     const actual = parseFloat(actualCash || '0')
     const expected = float + shiftStats.cashRevenue
     const variance = actual - expected
+    if (!window.confirm(
+      `Close shift with ${shiftStats.saleCount} sale(s) totalling ${formatCurrency(shiftStats.totalRevenue)}` +
+      ` (variance ${variance >= 0 ? '+' : ''}${formatCurrency(variance)})? This cannot be undone.`,
+    )) return
     setShiftSubmitting(true)
     try {
-      await addDoc(collection(db, 'shiftCloses'), {
-        cashierId: appUser.uid,
-        cashierName: appUser.displayName,
-        openingFloat: float,
-        expectedCash: expected,
-        actualCash: actual,
+      const { error } = await supabase.from('shift_closes').insert({
+        cashier_id: appUser.uid,
+        cashier_name: appUser.displayName,
+        opening_float: float,
+        expected_cash: expected,
+        actual_cash: actual,
         variance,
-        saleCount: shiftStats.saleCount,
-        totalRevenue: shiftStats.totalRevenue,
-        cashSaleCount: shiftStats.cashSaleCount,
-        cashRevenue: shiftStats.cashRevenue,
+        sale_count: shiftStats.saleCount,
+        total_revenue: shiftStats.totalRevenue,
+        cash_sale_count: shiftStats.cashSaleCount,
+        cash_revenue: shiftStats.cashRevenue,
         notes: shiftNotes.trim() || null,
-        closedAt: serverTimestamp(),
       })
+      if (error) throw new Error(error.message)
       await writeAuditLog({
         action: 'shift_closed',
         entity: 'shiftClose',
@@ -302,15 +329,28 @@ export default function POS() {
     if (!returnPhoneSearch.trim()) return
     setReturnSearching(true)
     try {
-      const snap = await getDocs(query(
-        collection(db, 'sales'),
-        where('customerPhone', '==', returnPhoneSearch.trim()),
-      ))
-      const results = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() }) as Sale)
-        .filter((s) => s.status === 'completed' && s.returnStatus !== 'full')
-        .sort((a, b) => (b.createdAt?.toDate().getTime() ?? 0) - (a.createdAt?.toDate().getTime() ?? 0))
-        .slice(0, 10)
+      const { data, error } = await supabase
+        .from('sales')
+        .select('*')
+        .eq('customer_phone', returnPhoneSearch.trim())
+        .eq('status', 'completed')
+        .order('created_at', { ascending: false })
+        .limit(10)
+      if (error) throw new Error(error.message)
+      const rows = (data ?? []) as Array<Record<string, unknown>>
+      const ids = rows.map((r) => r.id as string)
+      let itemsBySale: Record<string, SaleItem[]> = {}
+      if (ids.length > 0) {
+        const { data: itemRows } = await supabase.from('sale_items').select('*').in('sale_id', ids)
+        for (const row of (itemRows ?? []) as Array<Record<string, unknown>>) {
+          const saleId = row.sale_id as string
+          if (!itemsBySale[saleId]) itemsBySale[saleId] = []
+          itemsBySale[saleId].push(mapSaleItem(row))
+        }
+      }
+      const results = rows
+        .map((r) => mapSale(r, itemsBySale[r.id as string] ?? []))
+        .filter((s) => s.returnStatus !== 'full')
       setReturnResults(results)
       if (results.length === 0) toast('No eligible sales found for this phone number', { icon: 'ℹ️' })
     } catch {
@@ -334,67 +374,25 @@ export default function POS() {
     if (!returnReason.trim()) { toast.error('Return reason is required'); return }
 
     // Safe division — skip items with quantity 0 (corrupted data guard)
-    const refundAmount = itemsToReturn.reduce((sum, item) => {
-      if (!item.quantity) return sum
-      const perUnit = item.subtotal / item.quantity
-      return sum + perUnit * (returnQtys[item.bookId] ?? 0)
-    }, 0)
-
-    const totalOriginalQty = selectedReturnSale.items.reduce((s, i) => s + i.quantity, 0)
-    const returnedQty = itemsToReturn.reduce((s, item) => s + (returnQtys[item.bookId] ?? 0), 0)
-    const returnStatusValue: 'full' | 'partial' = returnedQty >= totalOriginalQty ? 'full' : 'partial'
+    const returnItems = itemsToReturn.map((item) => {
+      const qty = returnQtys[item.bookId] ?? 0
+      const perUnit = item.quantity ? item.subtotal / item.quantity : 0
+      return { bookId: item.bookId, bookName: item.bookName, quantity: qty, refundAmount: perUnit * qty }
+    })
 
     setReturnSubmitting(true)
     try {
-      // Single transaction: restore stock + update sale atomically
-      await runTransaction(db, async (tx) => {
-        for (const item of itemsToReturn) {
-          const qty = returnQtys[item.bookId]
-          const bookRef = doc(db, 'books', item.bookId)
-          const bookSnap = await tx.get(bookRef)
-          const current = (bookSnap.data()?.inStock ?? 0) as number
-          tx.update(bookRef, { inStock: increment(qty), updatedAt: serverTimestamp() })
-          const txRef = doc(collection(db, 'stockTransactions'))
-          tx.set(txRef, {
-            bookId: item.bookId,
-            bookName: item.bookName,
-            type: 'in',
-            quantity: qty,
-            previousStock: current,
-            newStock: current + qty,
-            reason: `Return — sale ${selectedReturnSale.id.slice(-8)}`,
-            reference: selectedReturnSale.id,
-            performedBy: appUser.uid,
-            performedByName: appUser.displayName,
-            createdAt: serverTimestamp(),
-          })
-        }
-        // Update sale record inside the same transaction — fully atomic
-        tx.update(doc(db, 'sales', selectedReturnSale.id), {
-          returnStatus: returnStatusValue,
-          returnedItems: itemsToReturn.map((item) => ({
-            bookId: item.bookId,
-            bookName: item.bookName,
-            quantityReturned: returnQtys[item.bookId],
-          })),
-          returnReason: returnReason.trim(),
-          returnedBy: appUser.uid,
-          returnedAt: serverTimestamp(),
-          returnRefundAmount: refundAmount,
-        })
+      // Atomic on the server: restores stock, records the movement, and
+      // updates the sale's return status/refund total in one round-trip.
+      const result = await returnSaleItems({
+        saleId: selectedReturnSale.id,
+        items: returnItems,
+        reason: returnReason,
+        bookstoreId,
+        user: appUser,
       })
 
-      await writeAuditLog({
-        action: 'sale_returned',
-        entity: 'sale',
-        entityId: selectedReturnSale.id,
-        details: `Return for sale ${selectedReturnSale.id.slice(-8)} · ${returnedQty} item(s) · Refund: ${formatCurrency(refundAmount)}`,
-        performedBy: appUser.uid,
-        performedByName: appUser.displayName,
-        role: appUser.role,
-      })
-
-      toast.success(`Return processed · Refund: ${formatCurrency(refundAmount)}`)
+      toast.success(`Return processed · Refund: ${formatCurrency(result.refund)}`)
       setReturnModalOpen(false)
       setReturnPhoneSearch('')
       setReturnResults([])
@@ -402,7 +400,7 @@ export default function POS() {
       setReturnQtys({})
       setReturnReason('')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Return failed')
+      toast.error(opsErrorMessage(e, 'Return failed'))
     } finally {
       setReturnSubmitting(false)
     }
@@ -449,11 +447,11 @@ export default function POS() {
   const checkout = async () => {
     if (!appUser) return
     if (cart.length === 0) { toast.error('Cart is empty'); return }
-    if (!customerName.trim()) { toast.error('Customer name is required'); return }
+    const saleCustomerName = customerName.trim() || 'Walk-in'
 
     // For cash: validate the entered amount. For all other methods: record exact total as paid.
     const paid = paymentMethod === 'cash'
-      ? parseFloat(amountPaid || '0')
+      ? parseFloat(amountPaid || String(grandTotal))
       : grandTotal
     if (paymentMethod === 'cash' && paid < grandTotal) {
       toast.error(`Amount paid (${formatCurrency(paid)}) is less than the total (${formatCurrency(grandTotal)})`)
@@ -472,122 +470,89 @@ export default function POS() {
         subtotal:        r.subtotal,
       }))
 
-      // Deduct stock atomically
-      await runTransaction(db, async (tx) => {
-        // Read all books first
-        const bookRefs = cart.map((i) => doc(db, 'books', i.bookId))
-        const bookSnaps = await Promise.all(bookRefs.map((r) => tx.get(r)))
-
-        // Validate stock
-        bookSnaps.forEach((snap, idx) => {
-          const current = (snap.data()?.inStock ?? 0) as number
-          if (current < cart[idx].quantity) {
-            throw new Error(`Insufficient stock for "${cart[idx].bookName}"`)
-          }
-        })
-
-        // Deduct
-        bookRefs.forEach((ref, idx) => {
-          tx.update(ref, {
-            inStock: increment(-cart[idx].quantity),
-            updatedAt: serverTimestamp(),
-          })
-        })
-
-        // Create stock-out transactions
-        bookSnaps.forEach((snap, idx) => {
-          const current = (snap.data()?.inStock ?? 0) as number
-          const txRef = doc(collection(db, 'stockTransactions'))
-          tx.set(txRef, {
-            bookId: cart[idx].bookId,
-            bookName: cart[idx].bookName,
-            type: 'out',
-            quantity: cart[idx].quantity,
-            previousStock: current,
-            newStock: current - cart[idx].quantity,
-            reason: `POS Sale`,
-            performedBy: appUser.uid,
-            performedByName: appUser.displayName,
-            createdAt: serverTimestamp(),
-          })
-        })
-      })
-
-      // Upsert customer only when a phone number was provided.
-      // Phone is the document ID so it's the unique key — walk-in / anonymous
-      // sales (no phone) are recorded without a linked customer doc.
-      const hasPhone = customerPhone.trim().length > 0
-      let isNewCustomer = false
-      if (hasPhone) {
-        const customerRef = doc(db, 'customers', customerPhone)
-        isNewCustomer = !allCustomers.some((c) => c.phone === customerPhone)
-        if (isNewCustomer) {
-          await setDoc(customerRef, {
-            name: customerName,
-            phone: customerPhone,
-            email: '',
-            totalPurchases: 1,
-            totalSpent: grandTotal,
-            createdAt: serverTimestamp(),
-            lastPurchaseAt: serverTimestamp(),
-          })
-          await writeAuditLog({
-            action: 'customer_created',
-            entity: 'customer',
-            details: `New customer: ${customerName} (${customerPhone})`,
-            performedBy: appUser.uid,
-            performedByName: appUser.displayName,
-            role: appUser.role,
-          })
-        } else {
-          await updateDoc(customerRef, {
-            name: customerName,
-            totalPurchases: increment(1),
-            totalSpent: increment(grandTotal),
-            lastPurchaseAt: serverTimestamp(),
-          })
-        }
-      }
-      // Use phone as customer ID only when provided
-      const resolvedCustomerId = hasPhone ? customerPhone : null
-
-      // Create sale record
-      const saleRef = await addDoc(collection(db, 'sales'), {
-        customerId: resolvedCustomerId ?? null,
-        customerName,
-        customerPhone,
-        items: saleItems,
+      const totals = {
         subtotalBeforeDiscount,
         totalItemDiscounts,
         orderDiscountPercent,
         orderDiscountAmount,
         totalDiscountAmount,
         grandTotal,
-        paymentMethod,
-        amountPaid: paid,
-        changeGiven: changeDue,
-        notes,
-        cashierId: appUser.uid,
-        cashierName: appUser.displayName,
-        status: 'completed',
-        createdAt: serverTimestamp(),
-      })
+      }
+
+      // Atomic on the server: deducts stock, records sale + sale_items + movements.
+      // A fresh client_request_id per checkout means a double-tap / retry-after-timeout
+      // replays safely instead of double-charging stock.
+      const { data: newSaleId, error } = await supabase.rpc('complete_sale', {
+        p_customer_name: saleCustomerName,
+        p_customer_phone: customerPhone,
+        p_items: saleItems,
+        p_totals: totals,
+        p_payment_method: paymentMethod,
+        p_amount_paid: paid,
+        p_change_given: changeDue,
+        p_notes: notes,
+        p_bookstore_id: bookstoreId,
+        p_client_request_id: newRequestId(),
+      } as never)
+      if (error) throw new Error(error.message)
+      const saleId = newSaleId as string
+
+      // Upsert customer only when a phone number was provided.
+      // Phone is the row ID so it's the unique key — walk-in / anonymous
+      // sales (no phone) are recorded without a linked customer row.
+      const hasPhone = customerPhone.trim().length > 0
+      let isNewCustomer = false
+      if (hasPhone) {
+        const existing = allCustomers.find((c) => c.phone === customerPhone)
+        isNewCustomer = !existing
+        if (isNewCustomer) {
+          await supabase.from('customers').insert({
+            id: customerPhone,
+            name: saleCustomerName,
+            phone: customerPhone,
+            email: '',
+            total_purchases: 1,
+            total_spent: grandTotal,
+            last_purchase_at: new Date().toISOString(),
+          })
+          await writeAuditLog({
+            action: 'customer_created',
+            entity: 'customer',
+            details: `New customer: ${saleCustomerName} (${customerPhone})`,
+            performedBy: appUser.uid,
+            performedByName: appUser.displayName,
+            role: appUser.role,
+          })
+        } else {
+          await supabase
+            .from('customers')
+            .update({
+              name: saleCustomerName,
+              total_purchases: (existing?.totalPurchases ?? 0) + 1,
+              total_spent: (existing?.totalSpent ?? 0) + grandTotal,
+              last_purchase_at: new Date().toISOString(),
+            })
+            .eq('id', customerPhone)
+        }
+      }
+      // Use phone as customer ID only when provided
+      const resolvedCustomerId = hasPhone ? customerPhone : null
 
       await writeAuditLog({
         action: 'sale_created',
         entity: 'sale',
-        entityId: saleRef.id,
-        details: `Sale of ${cart.length} item(s) · Total: ${formatCurrency(grandTotal)} · Customer: ${customerName}`,
+        entityId: saleId,
+        details: `Sale of ${cart.length} item(s) · Total: ${formatCurrency(grandTotal)} · Customer: ${saleCustomerName}`,
         performedBy: appUser.uid,
         performedByName: appUser.displayName,
         role: appUser.role,
       })
 
-      setLastSaleId(saleRef.id)
+      setLastSaleId(saleId)
       setLastSaleData({
-        id: saleRef.id,
+        id: saleId,
         customerId: resolvedCustomerId ?? undefined,
-        customerName,
+        customerName: saleCustomerName,
         customerPhone,
         items: saleItems,
         subtotalBeforeDiscount,
@@ -603,23 +568,24 @@ export default function POS() {
         cashierId: appUser.uid,
         cashierName: appUser.displayName,
         status: 'completed',
-        createdAt: Timestamp.now(),
+        createdAt: new Date().toISOString(),
       })
       setCheckoutModalOpen(false)
       setSuccessModalOpen(true)
       clearCart()
 
-      // Update local customer list without a Firestore read (only when phone was given)
+      // Update local customer list without a network read (only when phone was given)
       if (hasPhone) {
         setAllCustomers((prev) => {
           if (isNewCustomer) {
             return [...prev, {
-              id: customerPhone, name: customerName, phone: customerPhone,
+              id: customerPhone, name: saleCustomerName, phone: customerPhone,
               email: '', totalPurchases: 1, totalSpent: grandTotal,
+              createdAt: new Date().toISOString(),
             } as Customer]
           }
           return prev.map((c) => c.phone === customerPhone
-            ? { ...c, name: customerName, totalPurchases: c.totalPurchases + 1, totalSpent: c.totalSpent + grandTotal }
+            ? { ...c, name: saleCustomerName, totalPurchases: c.totalPurchases + 1, totalSpent: c.totalSpent + grandTotal }
             : c
           )
         })
@@ -628,7 +594,7 @@ export default function POS() {
       // Fire-and-forget analytics update (errors are swallowed inside the helper)
       updateDailyAnalytics({ grandTotal, paymentMethod, items: saleItems })
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Checkout failed')
+      toast.error(opsErrorMessage(e, 'Checkout failed'))
     } finally {
       setSubmitting(false)
     }
@@ -638,7 +604,14 @@ export default function POS() {
 
   const filteredBooks = books.filter((b) => {
     const q = bookSearch.toLowerCase()
-    return !q || b.name.toLowerCase().includes(q) || (b.author ?? '').toLowerCase().includes(q) || (b.isbn ?? '').includes(q)
+    const matches =
+      !q ||
+      b.name.toLowerCase().includes(q) ||
+      (b.author ?? '').toLowerCase().includes(q) ||
+      (b.isbn ?? '').includes(q)
+    if (!matches) return false
+    if (showInStockOnly) return getRetailStock(b.id, b.inStock) > 0
+    return true
   })
 
   const inCartIds = new Set(cart.map((i) => i.bookId))
@@ -651,8 +624,8 @@ export default function POS() {
       <div className="flex-1 flex flex-col gap-3 min-h-0">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h1 className="text-xl font-bold text-gray-900">Point of Sale</h1>
-            <p className="text-sm text-gray-500">Search and add books to the cart</p>
+            <h1 className="text-xl font-bold text-gray-900">Sell</h1>
+            <p className="text-sm text-gray-500">Tap a book to add · store shelf stock only</p>
           </div>
           <div className="flex gap-2 shrink-0 flex-wrap justify-end">
             {lastSaleData && (
@@ -662,68 +635,71 @@ export default function POS() {
                 onClick={() => openReceiptPreview(lastSaleData)}
                 title="Reprint last receipt"
               >
-                <Printer className="h-4 w-4" /> Last Receipt
+                <Printer className="h-4 w-4" /> Receipt
               </Button>
             )}
             <Button variant="outline" size="sm" onClick={() => { setSelectedReturnSale(null); setReturnResults([]); setReturnPhoneSearch(''); setReturnModalOpen(true) }}>
               <RotateCcw className="h-4 w-4" /> Return
             </Button>
             <Button variant="outline" size="sm" onClick={openShiftModal}>
-              <Clock className="h-4 w-4" /> Close Shift
+              <Clock className="h-4 w-4" /> Shift
             </Button>
           </div>
         </div>
 
         <div className="relative">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+          <Search className="absolute left-3 top-3.5 h-5 w-5 text-gray-400" />
           <input
+            ref={bookSearchRef}
             value={bookSearch}
             onChange={(e) => setBookSearch(e.target.value)}
-            placeholder="Search books by name, author or ISBN…"
-            className="w-full rounded-lg border border-gray-300 bg-white pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+            placeholder="Search title, author, or ISBN…"
+            className="w-full rounded-xl border border-gray-300 bg-white pl-11 pr-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
         </div>
+        <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={showInStockOnly}
+            onChange={(e) => setShowInStockOnly(e.target.checked)}
+            className="rounded border-gray-300"
+          />
+          Only books on the shelf (in stock)
+        </label>
 
-        <div className="overflow-y-auto rounded-xl border border-gray-200 bg-white divide-y divide-gray-100 max-h-[calc(100vh-220px)]">
+        <div className="overflow-y-auto rounded-xl border border-gray-200 bg-white divide-y divide-gray-100 max-h-[calc(100vh-240px)]">
           {filteredBooks.length === 0 ? (
-            <div className="py-12 text-center text-sm text-gray-400">No books found</div>
+            <div className="py-12 text-center text-sm text-gray-400">
+              {showInStockOnly ? 'No books on the shelf match' : 'No books found'}
+            </div>
           ) : (
             filteredBooks.map((book) => {
               const inCart = inCartIds.has(book.id)
+              const retail = getRetailStock(book.id, book.inStock)
               return (
                 <button
                   key={book.id}
                   onClick={() => addToCart(book)}
-                  disabled={book.inStock === 0}
+                  disabled={retail === 0}
                   className={cn(
-                    'w-full flex items-center gap-3 px-4 py-3 text-left transition-colors',
-                    book.inStock === 0
+                    'w-full flex items-center gap-3 px-4 py-3.5 text-left transition-colors min-h-[64px]',
+                    retail === 0
                       ? 'opacity-40 cursor-not-allowed'
-                      : 'hover:bg-brand-50',
-                    inCart && 'bg-brand-50'
+                      : 'hover:bg-brand-50 active:bg-brand-100',
+                    inCart && 'bg-brand-50',
                   )}
                 >
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-100 text-brand-700 text-sm font-bold shrink-0">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-brand-100 text-brand-700 text-sm font-bold shrink-0">
                     {book.name.charAt(0)}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{book.name}</p>
-                    <p className="text-xs text-gray-400 truncate">{book.author}</p>
-                    {book.language && (
-                      <span className={cn(
-                        'inline-block mt-0.5 rounded px-1.5 py-0.5 text-[10px] font-semibold',
-                        book.language === 'Nepalaya' ? 'bg-brand-100 text-brand-700'
-                          : book.language === 'Nepali' ? 'bg-accent-100 text-accent-700'
-                          : 'bg-gray-100 text-gray-600'
-                      )}>
-                        {book.language}
-                      </span>
-                    )}
+                    <p className="text-sm font-semibold text-gray-900 truncate">{book.name}</p>
+                    <p className="text-xs text-gray-400 truncate">{book.author || '—'}</p>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="text-sm font-semibold text-gray-800">{formatCurrency(book.mrp)}</p>
-                    <p className={cn('text-xs', book.inStock <= 5 ? 'text-red-500' : 'text-gray-400')}>
-                      {book.inStock} left
+                    <p className="text-sm font-bold text-gray-900">{formatCurrency(book.mrp)}</p>
+                    <p className={cn('text-xs', retail <= 5 ? 'text-red-500 font-medium' : 'text-gray-400')}>
+                      {retail} left
                     </p>
                   </div>
                   {inCart && <Badge variant="green" className="shrink-0">In cart</Badge>}
@@ -736,64 +712,75 @@ export default function POS() {
 
       {/* ── RIGHT: Cart ── */}
       <div className="w-full lg:w-96 xl:w-[420px] flex flex-col gap-3">
-        {/* Customer */}
-        <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
-          <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-            <UserSearch className="h-4 w-4" /> Customer
-          </h2>
-
-          {/* Combined name OR phone search */}
-          <div className="relative">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-            <input
-              value={customerSearch}
-              onChange={(e) => handleCustomerSearch(e.target.value)}
-              onFocus={() => customerSuggestions.length > 0 && setShowSuggestions(true)}
-              onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-              placeholder="Search by name or phone…"
-              className="w-full rounded-lg border border-gray-300 bg-white pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-            {showSuggestions && customerSuggestions.length > 0 && (
-              <div className="absolute left-0 right-0 top-full z-10 mt-1 rounded-lg border border-gray-200 bg-white shadow-lg divide-y divide-gray-100">
-                {customerSuggestions.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => { selectCustomer(c); setCustomerSearch('') }}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-gray-50 transition-colors"
-                  >
-                    <UserAvatar name={c.name} className="h-8 w-8 shrink-0" />
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">{c.name}</p>
-                      <p className="text-xs text-gray-400">{c.phone} · {c.totalPurchases} purchase{c.totalPurchases !== 1 ? 's' : ''}</p>
-                    </div>
-                  </button>
-                ))}
+        {/* Customer — collapsed by default (Walk-in) */}
+        <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setCustomerOpen((v) => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50"
+          >
+            <span className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+              <UserSearch className="h-4 w-4" />
+              {customerPhone || (customerName && customerName !== 'Walk-in')
+                ? `${customerName}${customerPhone ? ` · ${customerPhone}` : ''}`
+                : 'Walk-in customer'}
+            </span>
+            <span className="text-xs text-brand-600 font-medium">
+              {customerOpen ? 'Done' : 'Add details'}
+            </span>
+          </button>
+          {customerOpen && (
+            <div className="px-4 pb-4 space-y-3 border-t border-gray-100 pt-3">
+              <div className="relative">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+                <input
+                  value={customerSearch}
+                  onChange={(e) => handleCustomerSearch(e.target.value)}
+                  onFocus={() => customerSuggestions.length > 0 && setShowSuggestions(true)}
+                  onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                  placeholder="Search by name or phone…"
+                  className="w-full rounded-lg border border-gray-300 bg-white pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+                {showSuggestions && customerSuggestions.length > 0 && (
+                  <div className="absolute left-0 right-0 top-full z-10 mt-1 rounded-lg border border-gray-200 bg-white shadow-lg divide-y divide-gray-100">
+                    {customerSuggestions.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => { selectCustomer(c); setCustomerSearch('') }}
+                        className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-gray-50 transition-colors"
+                      >
+                        <UserAvatar name={c.name} className="h-8 w-8 shrink-0" />
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">{c.name}</p>
+                          <p className="text-xs text-gray-400">{c.phone}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-
-          {/* Manual phone + name entry */}
-          <div className="grid grid-cols-2 gap-2">
-            <input
-              ref={phoneRef}
-              value={customerPhone}
-              onChange={(e) => handlePhoneChange(e.target.value)}
-              placeholder="Phone (optional)"
-              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-            <input
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
-              placeholder="Name *"
-              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          </div>
-
-          {customerId && (
-            <p className="text-xs text-green-600 flex items-center gap-1">
-              <CheckCircle className="h-3 w-3" /> Returning customer
-            </p>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  ref={phoneRef}
+                  value={customerPhone}
+                  onChange={(e) => handlePhoneChange(e.target.value)}
+                  placeholder="Phone (optional)"
+                  className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+                <input
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  placeholder="Name"
+                  className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+              {customerId && (
+                <p className="text-xs text-green-600 flex items-center gap-1">
+                  <CheckCircle className="h-3 w-3" /> Returning customer
+                </p>
+              )}
+            </div>
           )}
         </div>
 
@@ -840,30 +827,29 @@ export default function POS() {
                     </button>
                   </div>
                   <div className="flex items-center gap-3">
-                    {/* Qty */}
                     <div className="flex items-center gap-1 rounded-lg border border-gray-200 p-0.5">
-                      <button onClick={() => updateQty(item.bookId, -1)} className="rounded p-1 hover:bg-gray-100">
-                        <Minus className="h-3 w-3" />
+                      <button type="button" onClick={() => updateQty(item.bookId, -1)} className="rounded p-2 hover:bg-gray-100 min-h-[36px] min-w-[36px] flex items-center justify-center">
+                        <Minus className="h-4 w-4" />
                       </button>
-                      <span className="w-6 text-center text-sm font-medium">{item.quantity}</span>
-                      <button onClick={() => updateQty(item.bookId, 1)} className="rounded p-1 hover:bg-gray-100">
-                        <Plus className="h-3 w-3" />
+                      <span className="w-8 text-center text-sm font-semibold">{item.quantity}</span>
+                      <button type="button" onClick={() => updateQty(item.bookId, 1)} className="rounded p-2 hover:bg-gray-100 min-h-[36px] min-w-[36px] flex items-center justify-center">
+                        <Plus className="h-4 w-4" />
                       </button>
                     </div>
-                    {/* Per-item discount */}
-                    <div className="flex items-center gap-1 text-xs text-gray-500">
-                      <Tag className="h-3 w-3" />
-                      <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={item.discountPercent}
-                        onChange={(e) => setItemDiscount(item.bookId, parseFloat(e.target.value) || 0)}
-                        className="w-12 rounded border border-gray-200 px-1.5 py-0.5 text-xs text-center focus:outline-none focus:ring-1 focus:ring-brand-400"
-                      />
-                      <span>% off</span>
-                    </div>
-                    {/* Line total */}
+                    {showLineDiscounts && (
+                      <div className="flex items-center gap-1 text-xs text-gray-500">
+                        <Tag className="h-3 w-3" />
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          value={item.discountPercent}
+                          onChange={(e) => setItemDiscount(item.bookId, parseFloat(e.target.value) || 0)}
+                          className="w-12 rounded border border-gray-200 px-1.5 py-0.5 text-xs text-center focus:outline-none focus:ring-1 focus:ring-brand-400"
+                        />
+                        <span>% off</span>
+                      </div>
+                    )}
                     <span className="ml-auto text-sm font-semibold text-gray-800">
                       {formatCurrency(item.unitPrice * item.quantity * (1 - item.discountPercent / 100))}
                     </span>
@@ -877,9 +863,9 @@ export default function POS() {
           {/* Order-level discount */}
           {cart.length > 0 && (
             <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 space-y-2">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <Tag className="h-3.5 w-3.5 text-gray-400" />
-                <span className="text-xs text-gray-600">Order discount</span>
+                <span className="text-xs text-gray-600">Discount %</span>
                 <input
                   type="number"
                   min={0}
@@ -888,12 +874,19 @@ export default function POS() {
                   onChange={(e) => setOrderDiscountPercent(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
                   className="w-14 rounded border border-gray-200 px-1.5 py-0.5 text-xs text-center focus:outline-none focus:ring-1 focus:ring-brand-400"
                 />
-                <span className="text-xs text-gray-500">%</span>
                 <button
+                  type="button"
                   onClick={() => setShowDiscountPicker(!showDiscountPicker)}
-                  className="ml-auto text-xs text-brand-600 hover:text-brand-700 underline"
+                  className="text-xs text-brand-600 hover:text-brand-700 underline"
                 >
-                  Saved discounts
+                  Saved
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowLineDiscounts((v) => !v)}
+                  className="ml-auto text-xs text-gray-500 hover:text-gray-700 underline"
+                >
+                  {showLineDiscounts ? 'Hide line %' : 'Line %'}
                 </button>
               </div>
 
@@ -942,12 +935,16 @@ export default function POS() {
           {/* Checkout button */}
           <div className="p-4 pt-2">
             <Button
-              className="w-full"
+              className="w-full min-h-[52px] text-base"
               size="lg"
               disabled={cart.length === 0}
-              onClick={() => setCheckoutModalOpen(true)}
+              onClick={() => {
+                setAmountPaid(String(grandTotal))
+                setCheckoutModalOpen(true)
+              }}
             >
-              <Receipt className="h-4 w-4" /> Checkout
+              <Receipt className="h-5 w-5" />
+              Charge {cart.length > 0 ? formatCurrency(grandTotal) : ''}
             </Button>
           </div>
         </div>
@@ -1192,12 +1189,12 @@ export default function POS() {
           </div>
           <p className="text-lg font-semibold text-gray-900">Sale recorded!</p>
           <p className="text-sm text-gray-500">Sale ID: <span className="font-mono text-xs">{lastSaleId.slice(-8)}</span></p>
-          <div className="flex gap-2 w-full">
-            <Button variant="outline" className="flex-1" onClick={() => lastSaleData && printReceipt(lastSaleData)}>
-              <Printer className="h-4 w-4" /> Print Receipt
+          <div className="flex flex-col gap-2 w-full">
+            <Button size="lg" className="w-full min-h-[52px] text-base" onClick={() => setSuccessModalOpen(false)}>
+              Next sale ({successCountdown}s)
             </Button>
-            <Button className="flex-1" onClick={() => setSuccessModalOpen(false)}>
-              New Sale ({successCountdown}s)
+            <Button variant="outline" className="w-full" onClick={() => lastSaleData && printReceipt(lastSaleData)}>
+              <Printer className="h-4 w-4" /> Print Receipt
             </Button>
           </div>
         </div>

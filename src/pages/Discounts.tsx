@@ -1,16 +1,13 @@
 import { useState, useEffect } from 'react'
-import {
-  collection, getDocs, addDoc, updateDoc, deleteDoc,
-  doc, serverTimestamp, query, orderBy,
-} from 'firebase/firestore'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import toast from 'react-hot-toast'
 import { Plus, Pencil, Trash2, Tag, ToggleLeft, ToggleRight, RefreshCw } from 'lucide-react'
-import { db } from '@/lib/firebase'
+import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { writeAuditLog } from '@/lib/auditLog'
+import { mapDiscount } from '@/lib/mappers'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import type { Discount } from '@/types'
 import { Button } from '@/components/ui/Button'
@@ -56,14 +53,18 @@ export default function Discounts() {
 
   // One-time fetch — discounts rarely change and don't need a live listener.
   // Use the refresh button to reload after making changes on another device.
-  const fetchDiscounts = () => {
+  const fetchDiscounts = async () => {
     setLoading(true)
-    getDocs(query(collection(db, 'discounts'), orderBy('createdAt', 'desc')))
-      .then((snap) => {
-        setDiscounts(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Discount))
-      })
-      .catch(() => toast.error('Failed to load discounts'))
-      .finally(() => setLoading(false))
+    try {
+      const { data, error } = await supabase
+        .from('discounts')
+        .select('*')
+        .order('created_at', { ascending: false })
+      if (error) { toast.error('Failed to load discounts'); return }
+      setDiscounts((data ?? []).map((d) => mapDiscount(d as Record<string, unknown>)))
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { fetchDiscounts() }, [])
@@ -93,7 +94,20 @@ export default function Discounts() {
     setSubmitting(true)
     try {
       if (editing) {
-        await updateDoc(doc(db, 'discounts', editing.id), { ...data, updatedAt: serverTimestamp() })
+        const { error } = await supabase
+          .from('discounts')
+          .update({
+            name: data.name,
+            code: data.code ?? null,
+            type: data.type,
+            value: data.value,
+            scope: data.scope,
+            min_purchase_amount: data.minPurchaseAmount ?? null,
+            max_discount_amount: data.maxDiscountAmount ?? null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', editing.id)
+        if (error) throw new Error(error.message)
         await writeAuditLog({
           action: 'discount_updated',
           entity: 'discount',
@@ -104,18 +118,28 @@ export default function Discounts() {
           role: appUser.role,
         })
         toast.success('Discount updated')
-      fetchDiscounts()
+        fetchDiscounts()
       } else {
-        const ref = await addDoc(collection(db, 'discounts'), {
-          ...data,
-          isActive: true,
-          createdAt: serverTimestamp(),
-          createdBy: appUser.uid,
-        })
+        const { data: inserted, error } = await supabase
+          .from('discounts')
+          .insert({
+            name: data.name,
+            code: data.code ?? null,
+            type: data.type,
+            value: data.value,
+            scope: data.scope,
+            min_purchase_amount: data.minPurchaseAmount ?? null,
+            max_discount_amount: data.maxDiscountAmount ?? null,
+            is_active: true,
+            created_by: appUser.uid,
+          })
+          .select('id')
+          .single()
+        if (error) throw new Error(error.message)
         await writeAuditLog({
           action: 'discount_created',
           entity: 'discount',
-          entityId: ref.id,
+          entityId: inserted.id as string,
           details: `Created discount "${data.name}"`,
           performedBy: appUser.uid,
           performedByName: appUser.displayName,
@@ -135,7 +159,8 @@ export default function Discounts() {
   const toggleActive = async (d: Discount) => {
     if (!appUser) return
     try {
-      await updateDoc(doc(db, 'discounts', d.id), { isActive: !d.isActive })
+      const { error } = await supabase.from('discounts').update({ is_active: !d.isActive }).eq('id', d.id)
+      if (error) throw new Error(error.message)
       // Update local state directly — no need to re-fetch for a simple boolean flip
       setDiscounts((prev) => prev.map((x) => x.id === d.id ? { ...x, isActive: !d.isActive } : x))
       toast.success(d.isActive ? 'Discount deactivated' : 'Discount activated')
@@ -146,7 +171,8 @@ export default function Discounts() {
 
   const remove = async () => {
     if (!deleteConfirm || !appUser) return
-    await deleteDoc(doc(db, 'discounts', deleteConfirm.id))
+    const { error } = await supabase.from('discounts').delete().eq('id', deleteConfirm.id)
+    if (error) { toast.error('Failed to delete discount'); return }
     setDiscounts((prev) => prev.filter((x) => x.id !== deleteConfirm.id))
     await writeAuditLog({
       action: 'discount_deleted',

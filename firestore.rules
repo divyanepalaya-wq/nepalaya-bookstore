@@ -2,96 +2,186 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ── Role helpers ────────────────────────────────────────────────────────
+    // Firestore roles: cashier | admin | superadmin
+    // UI labels:       Cashier | Warehouse | Admin
+
     function isAuthenticated() {
       return request.auth != null;
     }
 
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
     function getRole() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+      return userDoc().role;
     }
 
     function isActive() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true;
+      return userDoc().isActive == true;
     }
 
-    function isSuperAdmin() {
+    /** Any active staff (Cashier / Warehouse / Admin) */
+    function isStaff() {
+      return isAuthenticated() && isActive()
+        && getRole() in ['cashier', 'admin', 'superadmin'];
+    }
+
+    /** Cashier only — store till */
+    function isCashierOnly() {
+      return isAuthenticated() && isActive() && getRole() == 'cashier';
+    }
+
+    /** Warehouse ops + Admin (Firestore admin | superadmin) */
+    function isWarehouseOps() {
+      return isAuthenticated() && isActive()
+        && getRole() in ['admin', 'superadmin'];
+    }
+
+    /** Full Admin (superadmin) */
+    function isFullAdmin() {
       return isAuthenticated() && isActive() && getRole() == 'superadmin';
     }
 
-    function isAdmin() {
-      return isAuthenticated() && isActive() && (getRole() == 'admin' || getRole() == 'superadmin');
+    /** Cashier POS dual-write: only stock fields on books */
+    function cashierBookStockUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['inStock', 'updatedAt']);
     }
 
-    function isCashier() {  
-      return isAuthenticated() && isActive() && (
-        getRole() == 'cashier' || getRole() == 'admin' || getRole() == 'superadmin'
-      );
+    /** Self-profile edit: cannot escalate role or reactivate self */
+    function selfProfileUpdate(userId) {
+      return request.auth.uid == userId
+        && !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['role', 'isActive', 'email', 'createdAt']);
     }
 
-    // ── Users ──────────────────────────────────────────────────────────────
+    // ── Users ───────────────────────────────────────────────────────────────
     match /users/{userId} {
-      allow read:   if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      allow create: if isSuperAdmin();
-      allow update: if isSuperAdmin() || request.auth.uid == userId;
-      allow delete: if isSuperAdmin();
+      allow read: if isAuthenticated()
+        && (request.auth.uid == userId || isWarehouseOps());
+      allow create: if isFullAdmin();
+      allow update: if isFullAdmin() || selfProfileUpdate(userId);
+      allow delete: if isFullAdmin();
     }
 
-    // ── Books ──────────────────────────────────────────────────────────────
+    // ── Books (catalog) ─────────────────────────────────────────────────────
+    // Cashiers: read + dual-write inStock on sale/return
+    // Warehouse/Admin: full catalog create/update
     match /books/{bookId} {
-      allow read:           if isCashier();
-      allow create, update: if isAdmin();
-      allow delete:         if isSuperAdmin();
+      allow read: if isStaff();
+      allow create: if isWarehouseOps();
+      allow update: if isWarehouseOps()
+        || (isCashierOnly() && cashierBookStockUpdate());
+      allow delete: if isFullAdmin();
     }
 
-    // ── Stock Transactions (append-only — no update/delete ever) ────────────
+    // ── Stock Transactions (append-only) ────────────────────────────────────
     match /stockTransactions/{txId} {
-      allow read:          if isAdmin();
-      allow create:        if isCashier();   // cashiers create these during POS sales and returns
+      allow read: if isWarehouseOps();
+      allow create: if isStaff();
       allow update, delete: if false;
     }
 
-    // ── Customers ──────────────────────────────────────────────────────────
+    // ── Customers ───────────────────────────────────────────────────────────
     match /customers/{customerId} {
-      allow read:           if isCashier();
-      allow create, update: if isCashier();
-      allow delete:         if isAdmin();
+      allow read, create, update: if isStaff();
+      allow delete: if isWarehouseOps();
     }
 
-    // ── Sales ──────────────────────────────────────────────────────────────
+    // ── Sales ───────────────────────────────────────────────────────────────
     match /sales/{saleId} {
-      allow read:   if isCashier();
-      allow create: if isCashier();
-      allow update: if isCashier();   // cashiers can update for returns; admins can void
-      allow delete: if isSuperAdmin();
+      allow read, create, update: if isStaff();
+      allow delete: if isFullAdmin();
     }
 
-    // ── Discounts ──────────────────────────────────────────────────────────
+    // ── Discounts ───────────────────────────────────────────────────────────
     match /discounts/{discountId} {
-      allow read:           if isCashier();
-      allow create, update: if isAdmin();
-      allow delete:         if isSuperAdmin();
+      allow read: if isStaff();
+      allow create, update: if isWarehouseOps();
+      allow delete: if isFullAdmin();
     }
 
-    // ── Audit Logs (append-only — no update/delete ever) ───────────────────
+    // ── Audit Logs (append-only) ────────────────────────────────────────────
     match /auditLogs/{logId} {
-      allow read:          if isAdmin();
-      allow create:        if isAuthenticated();
+      allow read: if isWarehouseOps();
+      allow create: if isStaff();
       allow update, delete: if false;
     }
 
-    // ── Shift Closes (cashiers write, admins read) ─────────────────────────
+    // ── Shift Closes (append-only) ──────────────────────────────────────────
     match /shiftCloses/{closeId} {
-      allow read:          if isAdmin();
-      allow create:        if isCashier();
+      allow read: if isWarehouseOps();
+      allow create: if isStaff();
       allow update, delete: if false;
     }
 
-    // ── Daily Analytics (cashiers write via setDoc merge, admins read) ─────
-    // Written by POS on every sale — one doc per day, fields are incremented.
+    // ── Daily Analytics ─────────────────────────────────────────────────────
     match /analytics/{docId} {
-      allow read:   if isAdmin();
-      allow write:  if isCashier();
+      allow read: if isWarehouseOps();
+      allow write: if isStaff();
     }
 
+    // ── Locations (warehouses) ──────────────────────────────────────────────
+    // Three permanent: Main Warehouse / Backroom / Bookstore Floor
+    match /warehouses/{warehouseId} {
+      allow read: if isStaff();
+      allow create, update: if isWarehouseOps();
+      allow delete: if isFullAdmin();
+    }
+
+    // ── Cartons (boxes) ─────────────────────────────────────────────────────
+    // Cashiers may read/scan; only warehouse ops create/update
+    match /boxes/{boxId} {
+      allow read: if isStaff();
+      allow create, update: if isWarehouseOps();
+      allow delete: if isFullAdmin();
+    }
+
+    // ── Book Inventory (per-location qty) ───────────────────────────────────
+    // Cashiers: sale/return on Bookstore Floor
+    // Warehouse: receive / transfer / put-on-sale / stocktake
+    match /bookInventory/{bookId} {
+      allow read, write: if isStaff();
+    }
+
+    // ── Transfers ───────────────────────────────────────────────────────────
+    match /transfers/{transferId} {
+      allow read: if isStaff();
+      allow create, update: if isWarehouseOps();
+      allow delete: if isFullAdmin();
+    }
+
+    // ── Inventory Movements (append-only) ───────────────────────────────────
+    // Cashiers: sale / return · Warehouse: receive / transfer / put-on-sale
+    match /inventoryMovements/{movementId} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update, delete: if false;
+    }
+
+    // ── Carton barcode sequence counters ────────────────────────────────────
+    match /counters/{counterId} {
+      allow read, write: if isWarehouseOps();
+    }
+
+    // ── Shelf Locations ─────────────────────────────────────────────────────
+    match /shelfLocations/{shelfId} {
+      allow read: if isStaff();
+      allow create, update: if isWarehouseOps();
+      allow delete: if isFullAdmin();
+    }
+
+    // ── Stocktakes / Cycle count ────────────────────────────────────────────
+    match /stocktakes/{stocktakeId} {
+      allow read, create, update: if isWarehouseOps();
+      allow delete: if isFullAdmin();
+    }
+
+    // Default deny everything else
+    match /{document=**} {
+      allow read, write: if false;
+    }
   }
 }

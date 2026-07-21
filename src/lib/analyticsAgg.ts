@@ -1,20 +1,23 @@
 /**
  * analyticsAgg.ts
  *
- * Keeps a lightweight daily analytics document up-to-date on every sale.
- * Path: analytics/{YYYY-MM-DD}
+ * Keeps a lightweight daily analytics row up-to-date on every sale.
+ * Table: analytics (id = 'YYYY-MM-DD', data jsonb)
  *
- * This lets SuperAdmin load 30 analytics docs (30 reads) instead of 500 sale
- * documents every time the analytics tab is opened — a ~94% read reduction.
+ * This lets SuperAdmin load 30 analytics rows (30 reads) instead of 500 sale
+ * rows every time the analytics tab is opened — a ~94% read reduction.
  *
- * The doc is written with setDoc + merge:true so the first sale of the day
- * creates it, and every subsequent sale increments its fields atomically.
+ * Postgres has no `increment()` field-update primitive like Firestore, so we
+ * read the current row, merge the delta into its jsonb `data` in JS, and
+ * upsert the result. This is a read-modify-write (not perfectly atomic under
+ * heavy concurrent checkout), which is an acceptable trade-off for a
+ * supplemental analytics feature.
  */
 
-import { doc, setDoc, serverTimestamp, increment } from 'firebase/firestore'
 import { format } from 'date-fns'
-import { db } from '@/lib/firebase'
-import type { PaymentMethod } from '@/types'
+import { supabase } from '@/lib/supabase'
+import { toMillis } from '@/lib/utils'
+import type { AppTimestamp, PaymentMethod } from '@/types'
 
 export interface SaleAnalyticsItem {
   bookId: string
@@ -39,30 +42,74 @@ export interface DailyAnalytics {
   paymentMethods: Record<string, { count: number; revenue: number }>
 }
 
-/** Shared builder for both add and reverse (void) operations. dir=1 to add, dir=-1 to subtract. */
-function buildAnalyticsUpdate(
-  dir: 1 | -1,
-  params: { grandTotal: number; paymentMethod: PaymentMethod; items: SaleAnalyticsItem[]; dateStr: string; hourKey: string },
-): Record<string, unknown> {
-  const { grandTotal, paymentMethod, items, dateStr, hourKey } = params
-  const update: Record<string, unknown> = {
+function emptyAnalytics(dateStr: string): DailyAnalytics {
+  return {
     date: dateStr,
-    totalRevenue: increment(dir * grandTotal),
-    saleCount:    increment(dir * 1),
-    cashRevenue:  increment(dir * (paymentMethod === 'cash' ? grandTotal : 0)),
-    cashSaleCount:increment(dir * (paymentMethod === 'cash' ? 1 : 0)),
-    [`hourlyRevenue.${hourKey}`]: increment(dir * grandTotal),
-    [`hourlyCount.${hourKey}`]:   increment(dir * 1),
-    [`paymentMethods.${paymentMethod}.count`]:   increment(dir * 1),
-    [`paymentMethods.${paymentMethod}.revenue`]: increment(dir * grandTotal),
-    updatedAt: serverTimestamp(),
+    totalRevenue: 0,
+    saleCount: 0,
+    cashRevenue: 0,
+    cashSaleCount: 0,
+    hourlyRevenue: {},
+    hourlyCount: {},
+    topBooks: {},
+    paymentMethods: {},
   }
-  items.forEach((item) => {
-    update[`topBooks.${item.bookId}.qty`]     = increment(dir * item.quantity)
-    update[`topBooks.${item.bookId}.revenue`] = increment(dir * item.subtotal)
-    update[`topBooks.${item.bookId}.name`]    = item.bookName  // always safe to keep the name
+}
+
+async function loadDay(dateStr: string): Promise<DailyAnalytics> {
+  const { data, error } = await supabase.from('analytics').select('data').eq('id', dateStr).maybeSingle()
+  if (error || !data) return emptyAnalytics(dateStr)
+  return { ...emptyAnalytics(dateStr), ...(data.data as Partial<DailyAnalytics>) }
+}
+
+async function saveDay(dateStr: string, day: DailyAnalytics): Promise<void> {
+  await supabase.from('analytics').upsert({
+    id: dateStr,
+    data: day as unknown as Record<string, unknown>,
+    updated_at: new Date().toISOString(),
   })
-  return update
+}
+
+/** Shared merge for both add and reverse (void) operations. dir=1 to add, dir=-1 to subtract. */
+function applyDelta(
+  day: DailyAnalytics,
+  dir: 1 | -1,
+  params: { grandTotal: number; paymentMethod: PaymentMethod; items: SaleAnalyticsItem[]; hourKey: string },
+): DailyAnalytics {
+  const { grandTotal, paymentMethod, items, hourKey } = params
+  const isCash = paymentMethod === 'cash'
+
+  const next: DailyAnalytics = {
+    ...day,
+    totalRevenue: day.totalRevenue + dir * grandTotal,
+    saleCount: day.saleCount + dir * 1,
+    cashRevenue: day.cashRevenue + dir * (isCash ? grandTotal : 0),
+    cashSaleCount: day.cashSaleCount + dir * (isCash ? 1 : 0),
+    hourlyRevenue: { ...day.hourlyRevenue },
+    hourlyCount: { ...day.hourlyCount },
+    topBooks: { ...day.topBooks },
+    paymentMethods: { ...day.paymentMethods },
+  }
+
+  next.hourlyRevenue[hourKey] = (next.hourlyRevenue[hourKey] ?? 0) + dir * grandTotal
+  next.hourlyCount[hourKey] = (next.hourlyCount[hourKey] ?? 0) + dir * 1
+
+  const pm = next.paymentMethods[paymentMethod] ?? { count: 0, revenue: 0 }
+  next.paymentMethods[paymentMethod] = {
+    count: pm.count + dir * 1,
+    revenue: pm.revenue + dir * grandTotal,
+  }
+
+  items.forEach((item) => {
+    const existing = next.topBooks[item.bookId] ?? { name: item.bookName, qty: 0, revenue: 0 }
+    next.topBooks[item.bookId] = {
+      name: item.bookName,
+      qty: existing.qty + dir * item.quantity,
+      revenue: existing.revenue + dir * item.subtotal,
+    }
+  })
+
+  return next
 }
 
 /**
@@ -77,33 +124,36 @@ export async function updateDailyAnalytics(params: {
   try {
     const dateStr = format(new Date(), 'yyyy-MM-dd')
     const hourKey = String(new Date().getHours())
-    const analyticsRef = doc(db, 'analytics', dateStr)
-    await setDoc(analyticsRef, buildAnalyticsUpdate(1, { ...params, dateStr, hourKey }), { merge: true })
+    const day = await loadDay(dateStr)
+    const next = applyDelta(day, 1, { ...params, hourKey })
+    await saveDay(dateStr, next)
   } catch (e) {
     console.warn('[analyticsAgg] Failed to update daily analytics:', e)
   }
 }
 
 /**
- * Call when a sale is voided to subtract its numbers from the analytics doc.
- * Uses the sale's original createdAt timestamp so it targets the correct day's doc
- * (a sale created on Monday voided on Tuesday must deduct from Monday's doc).
+ * Call when a sale is voided to subtract its numbers from the analytics row.
+ * Uses the sale's original createdAt timestamp so it targets the correct day's
+ * row (a sale created on Monday voided on Tuesday must deduct from Monday's row).
  * Errors are swallowed — analytics are supplemental.
  */
 export async function reverseDailyAnalytics(params: {
   grandTotal: number
   paymentMethod: PaymentMethod
   items: SaleAnalyticsItem[]
-  /** The Firestore Timestamp from the original sale's createdAt field */
-  saleCreatedAt: { toDate: () => Date }
+  saleCreatedAt: AppTimestamp
 }): Promise<void> {
   try {
     const { saleCreatedAt, ...rest } = params
-    const saleDate = saleCreatedAt.toDate()
-    const dateStr  = format(saleDate, 'yyyy-MM-dd')
-    const hourKey  = String(saleDate.getHours())
-    const analyticsRef = doc(db, 'analytics', dateStr)
-    await setDoc(analyticsRef, buildAnalyticsUpdate(-1, { ...rest, dateStr, hourKey }), { merge: true })
+    const ms = toMillis(saleCreatedAt)
+    if (!ms) return
+    const saleDate = new Date(ms)
+    const dateStr = format(saleDate, 'yyyy-MM-dd')
+    const hourKey = String(saleDate.getHours())
+    const day = await loadDay(dateStr)
+    const next = applyDelta(day, -1, { ...rest, hourKey })
+    await saveDay(dateStr, next)
   } catch (e) {
     console.warn('[analyticsAgg] Failed to reverse analytics for voided sale:', e)
   }

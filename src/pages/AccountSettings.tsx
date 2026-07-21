@@ -1,20 +1,13 @@
 import { useState } from 'react'
-import {
-  updatePassword,
-  reauthenticateWithCredential,
-  EmailAuthProvider,
-  sendPasswordResetEmail,
-} from 'firebase/auth'
-import { updateDoc, doc } from 'firebase/firestore'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import toast from 'react-hot-toast'
 import { Lock, User, Mail, KeyRound, Shield } from 'lucide-react'
-import { auth, db } from '@/lib/firebase'
+import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { writeAuditLog } from '@/lib/auditLog'
-import { getFirebaseErrorMessage } from '@/lib/firebaseErrors'
+import { getAuthErrorMessage } from '@/lib/authErrors'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 
@@ -55,27 +48,32 @@ export default function AccountSettings() {
   })
 
   const handleChangePassword = async (data: PasswordForm) => {
-    const user = auth.currentUser
-    if (!user || !user.email) { toast.error('Not authenticated'); return }
+    if (!appUser?.email) { toast.error('Not authenticated'); return }
     setChangingPassword(true)
     try {
-      // Re-authenticate first
-      const credential = EmailAuthProvider.credential(user.email, data.currentPassword)
-      await reauthenticateWithCredential(user, credential)
-      await updatePassword(user, data.newPassword)
+      // Re-authenticate first by verifying the current password
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: appUser.email,
+        password: data.currentPassword,
+      })
+      if (signInError) throw new Error('Current password is incorrect')
+
+      const { error } = await supabase.auth.updateUser({ password: data.newPassword })
+      if (error) throw new Error(error.message)
+
       await writeAuditLog({
         action: 'password_changed',
         entity: 'user',
-        entityId: appUser?.uid,
-        details: `${appUser?.displayName} changed their password`,
-        performedBy: appUser?.uid ?? '',
-        performedByName: appUser?.displayName ?? '',
-        role: appUser?.role ?? 'cashier',
+        entityId: appUser.uid,
+        details: `${appUser.displayName} changed their password`,
+        performedBy: appUser.uid,
+        performedByName: appUser.displayName,
+        role: appUser.role,
       })
       toast.success('Password updated successfully')
       resetPw()
     } catch (e) {
-      toast.error(getFirebaseErrorMessage(e))
+      toast.error(getAuthErrorMessage(e))
     } finally {
       setChangingPassword(false)
     }
@@ -85,7 +83,12 @@ export default function AccountSettings() {
     if (!appUser) return
     setUpdatingProfile(true)
     try {
-      await updateDoc(doc(db, 'users', appUser.uid), { displayName: data.displayName })
+      const { error } = await supabase
+        .from('profiles')
+        .update({ display_name: data.displayName })
+        .eq('id', appUser.uid)
+      if (error) throw new Error(error.message)
+
       await writeAuditLog({
         action: 'profile_updated',
         entity: 'user',
@@ -104,12 +107,12 @@ export default function AccountSettings() {
   }
 
   const handleForgotPassword = async () => {
-    const user = auth.currentUser
-    if (!user?.email) { toast.error('No email found'); return }
+    if (!appUser?.email) { toast.error('No email found'); return }
     setSendingReset(true)
     try {
-      await sendPasswordResetEmail(auth, user.email)
-      toast.success(`Reset email sent to ${user.email}`)
+      const { error } = await supabase.auth.resetPasswordForEmail(appUser.email)
+      if (error) throw new Error(error.message)
+      toast.success(`Reset email sent to ${appUser.email}`)
     } catch {
       toast.error('Failed to send reset email')
     } finally {

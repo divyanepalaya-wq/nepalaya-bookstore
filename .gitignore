@@ -27,3 +27,8 @@ dist-ssr
 .env
 .env.local
 .env.production
+
+# Migration secrets / dumps
+serviceAccount.json
+scripts/migrate/data/*.json
+!scripts/migrate/data/.gitkeep

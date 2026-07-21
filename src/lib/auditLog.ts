@@ -1,8 +1,7 @@
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore'
-import { db } from '@/lib/firebase'
+import { supabase } from '@/lib/supabase'
 import type { AuditAction, UserRole } from '@/types'
 
-interface AuditLogInput {
+export async function writeAuditLog(params: {
   action: AuditAction
   entity: string
   entityId?: string
@@ -10,16 +9,18 @@ interface AuditLogInput {
   performedBy: string
   performedByName: string
   role: UserRole
-}
-
-export async function writeAuditLog(input: AuditLogInput): Promise<void> {
+}) {
   try {
-    await addDoc(collection(db, 'auditLogs'), {
-      ...input,
-      createdAt: serverTimestamp(),
+    await supabase.from('audit_logs').insert({
+      action: params.action,
+      entity: params.entity,
+      entity_id: params.entityId ?? null,
+      details: params.details,
+      performed_by: params.performedBy,
+      performed_by_name: params.performedByName,
+      role: params.role,
     })
-  } catch {
-    // Audit log failures should never break the main flow
-    console.warn('Failed to write audit log', input)
+  } catch (e) {
+    console.warn('audit log failed', e)
   }
 }

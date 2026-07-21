@@ -1,9 +1,4 @@
 import { useState, useEffect } from 'react'
-import {
-  collection, onSnapshot, getDocs, getDoc, query, orderBy,
-  doc, setDoc, updateDoc, serverTimestamp, limit, startAfter, runTransaction, increment,
-  type QueryDocumentSnapshot, type Query, type DocumentData,
-} from 'firebase/firestore'
 import type { DailyAnalytics } from '@/lib/analyticsAgg'
 
 import { useForm } from 'react-hook-form'
@@ -14,21 +9,27 @@ import {
   BarChart2, Users, Receipt, FileText, BookOpen, Package,
   TrendingUp, AlertTriangle, Plus, Search, UserX, UserCheck,
   ShoppingBag, DollarSign, Download, Printer, RotateCcw, Minus, RefreshCw,
+  KeyRound, Shield,
 } from 'lucide-react'
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts'
 import { format, subDays } from 'date-fns'
-import { db, createUserViaRest } from '@/lib/firebase'
+import { supabase } from '@/lib/supabase'
+import { mapProfile, mapSale, mapSaleItem, mapAuditLog } from '@/lib/mappers'
+import { createStaffUser, resetStaffPassword, changeStaffRole, sendStaffResetEmail } from '@/lib/staffUsers'
 import { printReceipt } from '@/lib/receipt'
 import { reverseDailyAnalytics } from '@/lib/analyticsAgg'
 import { useAuth } from '@/contexts/AuthContext'
 import { useBooks } from '@/contexts/BooksContext'
+import { useWarehouse } from '@/contexts/WarehouseContext'
 import { writeAuditLog } from '@/lib/auditLog'
+import { applyInventoryDelta, recordReturnMovement } from '@/lib/inventoryService'
 import { formatCurrency, formatDateTime } from '@/lib/utils'
-import type { AppUser, Sale, AuditLog, UserRole, ReturnStatus } from '@/types'
-import { getFirebaseErrorMessage } from '@/lib/firebaseErrors'
+import type { AppUser, Sale, SaleItem, AuditLog, UserRole, ReturnStatus } from '@/types'
+import { getAuthErrorMessage } from '@/lib/authErrors'
+import { roleLabel } from '@/lib/roles'
 import { UserAvatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -49,10 +50,11 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: 'audit',     label: 'Audit Log',  icon: <FileText className="h-4 w-4" /> },
 ]
 
+// Labels match roleLabel() in @/lib/roles — operator-facing names, not raw role slugs.
 const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
-  { value: 'superadmin', label: 'Super Admin' },
-  { value: 'admin',      label: 'Admin' },
   { value: 'cashier',    label: 'Cashier' },
+  { value: 'admin',      label: 'Warehouse' },
+  { value: 'superadmin', label: 'Admin' },
 ]
 
 const userSchema = z.object({
@@ -65,23 +67,47 @@ type UserFormData = z.infer<typeof userSchema>
 
 const CHART_COLORS = ['#f37023', '#9c090e', '#10b981', '#3b82f6', '#8b5cf6']
 
+const SALES_PAGE_SIZE = 50
+const AUDIT_PAGE_SIZE = 20
+
+/** Fetch a page of sales (with their line items joined in) ordered newest-first. */
+async function fetchSalesPage(from: number, to: number): Promise<(Sale & { id: string })[]> {
+  const { data, error } = await supabase
+    .from('sales')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .range(from, to)
+  if (error || !data) return []
+  const rows = data as Array<Record<string, unknown>>
+  const ids = rows.map((r) => r.id as string)
+  let itemsBySale: Record<string, SaleItem[]> = {}
+  if (ids.length > 0) {
+    const { data: itemRows } = await supabase.from('sale_items').select('*').in('sale_id', ids)
+    for (const row of (itemRows ?? []) as Array<Record<string, unknown>>) {
+      const saleId = row.sale_id as string
+      if (!itemsBySale[saleId]) itemsBySale[saleId] = []
+      itemsBySale[saleId].push(mapSaleItem(row))
+    }
+  }
+  return rows.map((r) => mapSale(r, itemsBySale[r.id as string] ?? []))
+}
+
 export default function SuperAdmin() {
   const { appUser } = useAuth()
   const { books } = useBooks()
+  const { bookstoreId } = useWarehouse()
   const [activeTab, setActiveTab] = useState<Tab>('analytics')
 
   // ─── Data ──────────────────────────────────────────────────────────────────
   const [users, setUsers]         = useState<AppUser[]>([])
-  const [sales, setSales]         = useState<Sale[]>([])
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
+  const [sales, setSales]         = useState<(Sale & { id: string })[]>([])
+  const [auditLogs, setAuditLogs] = useState<(AuditLog & { id: string })[]>([])
   const [analyticsDocs, setAnalyticsDocs] = useState<DailyAnalytics[]>([])
   const [loading, setLoading]     = useState(true)
 
-  // Pagination cursors
-  const [salesCursor, setSalesCursor]     = useState<QueryDocumentSnapshot | null>(null)
+  // Pagination offsets
   const [hasMoreSales, setHasMoreSales]   = useState(false)
   const [loadingMoreSales, setLoadingMoreSales] = useState(false)
-  const [auditCursor, setAuditCursor]     = useState<QueryDocumentSnapshot | null>(null)
   const [hasMoreAudit, setHasMoreAudit]   = useState(false)
   const [loadingMoreAudit, setLoadingMoreAudit] = useState(false)
 
@@ -96,85 +122,87 @@ export default function SuperAdmin() {
   const [voidReason, setVoidReason] = useState('')
   const [voidSubmitting, setVoidSubmitting] = useState(false)
   const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
+  const [resetUser, setResetUser] = useState<AppUser | null>(null)
+  const [resetPassword, setResetPassword] = useState('')
+  const [resetSubmitting, setResetSubmitting] = useState(false)
+  const [roleUser, setRoleUser] = useState<AppUser | null>(null)
+  const [roleValue, setRoleValue] = useState<UserRole>('cashier')
+  const [roleSubmitting, setRoleSubmitting] = useState(false)
   const [returnModal, setReturnModal] = useState<Sale | null>(null)
   const [returnQtys, setReturnQtys] = useState<Record<string, number>>({})
   const [returnReason, setReturnReason] = useState('')
   const [returnSubmitting, setReturnSubmitting] = useState(false)
 
   // ─── Data loading ──────────────────────────────────────────────────────────
-  // Strategy (minimises Firestore reads):
-  //   • Users  — live listener (need real-time for activation/deactivation)
-  //   • Analytics — 30 daily-summary docs   ≈ 30 reads  (replaces 500-sale load)
-  //   • Sales log  — first 50 most recent   ≈ 50 reads  (+ "Load more" cursor pages)
-  //   • Audit log  — first 20 most recent   ≈ 20 reads  (+ "Load more" cursor pages)
-  //   Total per page open: ~100 reads  (was ~1020)
+  // Strategy (minimises reads):
+  //   • Users  — live realtime channel (need real-time for activation/deactivation)
+  //   • Analytics — 30 daily-summary rows  ≈ 30 rows (replaces 500-sale load)
+  //   • Sales log  — first 50 most recent   ≈ 50 rows  (+ "Load more" pages)
+  //   • Audit log  — first 20 most recent   ≈ 20 rows  (+ "Load more" pages)
 
   useEffect(() => {
-    const unsub = onSnapshot(
-      query(collection(db, 'users'), orderBy('createdAt', 'desc')),
-      (s) => setUsers(s.docs.map((d) => ({ uid: d.id, ...d.data() }) as AppUser)),
-    )
+    async function loadUsers() {
+      const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: false })
+      if (error) return
+      setUsers((data ?? []).map((r) => mapProfile(r)))
+    }
+    void loadUsers()
+    const channel = supabase
+      .channel('profiles-superadmin-rt')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => void loadUsers())
+      .subscribe()
 
-    // Build array of the last 30 date strings to fetch analytics docs
+    // Build array of the last 30 date strings to fetch analytics rows
     const last30Dates = Array.from({ length: 30 }, (_, i) => {
       const d = subDays(new Date(), i)
       return format(d, 'yyyy-MM-dd')
     })
 
     Promise.all([
-      // 30 individual getDoc calls — one per day — same cost as a query returning 30 docs
-      Promise.all(last30Dates.map((d) => getDoc(doc(db, 'analytics', d)))),
-      // First page of sales (50)
-      getDocs(query(collection(db, 'sales'), orderBy('createdAt', 'desc'), limit(50))),
-      // First page of audit logs (20)
-      getDocs(query(collection(db, 'auditLogs'), orderBy('createdAt', 'desc'), limit(20))),
-    ]).then(([analyticsSnaps, salesSnap, auditSnap]) => {
+      supabase.from('analytics').select('id, data').in('id', last30Dates),
+      fetchSalesPage(0, SALES_PAGE_SIZE - 1),
+      supabase.from('audit_logs').select('*').order('created_at', { ascending: false }).range(0, AUDIT_PAGE_SIZE - 1),
+    ]).then(([analyticsRes, salesRows, auditRes]) => {
       setAnalyticsDocs(
-        analyticsSnaps
-          .filter((s) => s.exists())
-          .map((s) => s.data() as DailyAnalytics)
+        (analyticsRes.data ?? []).map((r) => r.data as DailyAnalytics),
       )
-      const salesDocs = salesSnap.docs
-      setSales(salesDocs.map((d) => ({ id: d.id, ...d.data() }) as Sale))
-      setSalesCursor(salesDocs[salesDocs.length - 1] ?? null)
-      setHasMoreSales(salesDocs.length === 50)
+      setSales(salesRows)
+      setHasMoreSales(salesRows.length === SALES_PAGE_SIZE)
 
-      const auditDocs = auditSnap.docs
-      setAuditLogs(auditDocs.map((d) => ({ id: d.id, ...d.data() }) as AuditLog))
-      setAuditCursor(auditDocs[auditDocs.length - 1] ?? null)
-      setHasMoreAudit(auditDocs.length === 20)
+      const auditRows = (auditRes.data ?? []).map((r) => mapAuditLog(r as Record<string, unknown>))
+      setAuditLogs(auditRows)
+      setHasMoreAudit(auditRows.length === AUDIT_PAGE_SIZE)
 
       setLoading(false)
     }).catch(() => setLoading(false))
 
-    return unsub
+    return () => { void supabase.removeChannel(channel) }
   }, [])
 
   const loadMoreSales = async () => {
-    if (!salesCursor || loadingMoreSales) return
+    if (loadingMoreSales) return
     setLoadingMoreSales(true)
     try {
-      const snap = await getDocs(
-        query(collection(db, 'sales'), orderBy('createdAt', 'desc'), startAfter(salesCursor), limit(50))
-      )
-      setSales((prev) => [...prev, ...snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Sale)])
-      setSalesCursor(snap.docs[snap.docs.length - 1] ?? null)
-      setHasMoreSales(snap.docs.length === 50)
+      const next = await fetchSalesPage(sales.length, sales.length + SALES_PAGE_SIZE - 1)
+      setSales((prev) => [...prev, ...next])
+      setHasMoreSales(next.length === SALES_PAGE_SIZE)
     } finally {
       setLoadingMoreSales(false)
     }
   }
 
   const loadMoreAudit = async () => {
-    if (!auditCursor || loadingMoreAudit) return
+    if (loadingMoreAudit) return
     setLoadingMoreAudit(true)
     try {
-      const snap = await getDocs(
-        query(collection(db, 'auditLogs'), orderBy('createdAt', 'desc'), startAfter(auditCursor), limit(20))
-      )
-      setAuditLogs((prev) => [...prev, ...snap.docs.map((d) => ({ id: d.id, ...d.data() }) as AuditLog)])
-      setAuditCursor(snap.docs[snap.docs.length - 1] ?? null)
-      setHasMoreAudit(snap.docs.length === 20)
+      const { data } = await supabase
+        .from('audit_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .range(auditLogs.length, auditLogs.length + AUDIT_PAGE_SIZE - 1)
+      const next = (data ?? []).map((r) => mapAuditLog(r as Record<string, unknown>))
+      setAuditLogs((prev) => [...prev, ...next])
+      setHasMoreAudit(next.length === AUDIT_PAGE_SIZE)
     } finally {
       setLoadingMoreAudit(false)
     }
@@ -182,7 +210,7 @@ export default function SuperAdmin() {
 
   // ─── Analytics backfill ────────────────────────────────────────────────────
   // One-time operation: reads all historical sales and writes correct analytics
-  // docs from scratch so data exists before the live aggregation was deployed.
+  // rows from scratch so data exists before the live aggregation was deployed.
 
   const [backfillState, setBackfillState] = useState<
     null | { phase: 'loading'; loaded: number } | { phase: 'writing'; done: number; total: number } | { phase: 'done' }
@@ -192,20 +220,17 @@ export default function SuperAdmin() {
     if (!appUser) return
     setBackfillState({ phase: 'loading', loaded: 0 })
     try {
-      // 1. Load every sale — paginate in chunks of 500
-      const allSales: Sale[] = []
-      let cursor: QueryDocumentSnapshot | null = null
+      // 1. Load every sale (with items) — paginate in chunks of 500
+      const allSales: (Sale & { id: string })[] = []
+      let offset = 0
+      const CHUNK = 500
       while (true) {
-        const salesCol = collection(db, 'sales')
-        const salesQ: Query<DocumentData> = cursor
-          ? query(salesCol, orderBy('createdAt', 'asc'), startAfter(cursor), limit(500))
-          : query(salesCol, orderBy('createdAt', 'asc'), limit(500))
         // eslint-disable-next-line no-await-in-loop
-        const snap = await getDocs(salesQ)
-        allSales.push(...snap.docs.map((d: QueryDocumentSnapshot) => ({ id: d.id, ...d.data() }) as Sale))
+        const page = await fetchSalesPage(offset, offset + CHUNK - 1)
+        allSales.push(...page)
         setBackfillState({ phase: 'loading', loaded: allSales.length })
-        if (snap.docs.length < 500) break
-        cursor = snap.docs[snap.docs.length - 1]
+        if (page.length < CHUNK) break
+        offset += CHUNK
       }
 
       // 2. Aggregate completed sales by day — compute full analytics client-side
@@ -214,8 +239,8 @@ export default function SuperAdmin() {
         .filter((s) => s.status === 'completed')
         .forEach((sale) => {
           if (!sale.createdAt) return
-          let saleDate: Date
-          try { saleDate = sale.createdAt.toDate() } catch { return }
+          const saleDate = new Date(sale.createdAt as string)
+          if (Number.isNaN(saleDate.getTime())) return
           const dateStr = format(saleDate, 'yyyy-MM-dd')
           const hourKey = String(saleDate.getHours())
 
@@ -248,17 +273,22 @@ export default function SuperAdmin() {
           })
         })
 
-      // 3. Write each day's doc — full overwrite for accuracy
+      // 3. Write each day's row — full overwrite for accuracy
       const dates = Object.keys(dayMap)
       for (let i = 0; i < dates.length; i++) {
         setBackfillState({ phase: 'writing', done: i, total: dates.length })
-        await setDoc(doc(db, 'analytics', dates[i]), dayMap[dates[i]])
+        // eslint-disable-next-line no-await-in-loop
+        await supabase.from('analytics').upsert({
+          id: dates[i],
+          data: dayMap[dates[i]] as unknown as Record<string, unknown>,
+          updated_at: new Date().toISOString(),
+        })
       }
 
       // 4. Reload analytics into local state
       const last30Dates = Array.from({ length: 30 }, (_, i) => format(subDays(new Date(), i), 'yyyy-MM-dd'))
-      const refreshed = await Promise.all(last30Dates.map((d) => getDoc(doc(db, 'analytics', d))))
-      setAnalyticsDocs(refreshed.filter((s) => s.exists()).map((s) => s.data() as DailyAnalytics))
+      const { data: refreshed } = await supabase.from('analytics').select('id, data').in('id', last30Dates)
+      setAnalyticsDocs((refreshed ?? []).map((r) => r.data as DailyAnalytics))
 
       setBackfillState({ phase: 'done' })
       toast.success(`Analytics rebuilt from ${allSales.length} sales across ${dates.length} days`)
@@ -269,7 +299,7 @@ export default function SuperAdmin() {
     }
   }
 
-  // ─── Analytics computations (from pre-aggregated daily docs — 0 extra reads) ──
+  // ─── Analytics computations (from pre-aggregated daily rows — 0 extra reads) ──
 
   const todayStr = format(new Date(), 'yyyy-MM-dd')
   const analyticsMap = new Map(analyticsDocs.map((a) => [a.date, a]))
@@ -283,14 +313,14 @@ export default function SuperAdmin() {
 
   const lowStockBooks = books.filter((b) => b.inStock <= b.minStockAlert)
 
-  // Revenue last 30 days chart — each point is one analytics doc read (already in memory)
+  // Revenue last 30 days chart — each point is one analytics row (already in memory)
   const revenueChart = Array.from({ length: 30 }, (_, i) => {
     const d       = subDays(new Date(), 29 - i)
     const dateStr = format(d, 'yyyy-MM-dd')
     return { date: format(d, 'MMM d'), revenue: analyticsMap.get(dateStr)?.totalRevenue ?? 0 }
   })
 
-  // Top 5 books — aggregated across all 30 analytics docs
+  // Top 5 books — aggregated across all 30 analytics rows
   const bookQtyMap: Record<string, { name: string; qty: number; revenue: number }> = {}
   analyticsDocs.forEach((a) => {
     Object.entries(a.topBooks ?? {}).forEach(([bookId, data]) => {
@@ -306,7 +336,7 @@ export default function SuperAdmin() {
   books.forEach((b) => { categoryMap[b.category] = (categoryMap[b.category] ?? 0) + 1 })
   const categoryData = Object.entries(categoryMap).map(([name, value]) => ({ name, value }))
 
-  // Payment method distribution — aggregated across 30 analytics docs
+  // Payment method distribution — aggregated across 30 analytics rows
   const paymentMap: Record<string, { method: string; count: number; revenue: number }> = {}
   analyticsDocs.forEach((a) => {
     Object.entries(a.paymentMethods ?? {}).forEach(([method, data]) => {
@@ -317,7 +347,7 @@ export default function SuperAdmin() {
   })
   const paymentData = Object.values(paymentMap).sort((a, b) => b.revenue - a.revenue)
 
-  // Hourly distribution — from today's analytics doc (most relevant for operations)
+  // Hourly distribution — from today's analytics row (most relevant for operations)
   const hourlyData = Array.from({ length: 24 }, (_, h) => ({
     hour: h,
     label: `${h.toString().padStart(2, '0')}:00`,
@@ -336,14 +366,11 @@ export default function SuperAdmin() {
     if (!appUser) return
     setSubmittingUser(true)
     try {
-      const uid = await createUserViaRest(data.email, data.password)
-      await setDoc(doc(db, 'users', uid), {
+      const uid = await createStaffUser({
         email: data.email,
+        password: data.password,
         displayName: data.displayName,
         role: data.role,
-        isActive: true,
-        createdAt: serverTimestamp(),
-        createdBy: appUser.uid,
       })
       await writeAuditLog({
         action: 'user_created',
@@ -358,7 +385,7 @@ export default function SuperAdmin() {
       setUserModalOpen(false)
       reset()
     } catch (e) {
-      toast.error(getFirebaseErrorMessage(e))
+      toast.error(getAuthErrorMessage(e))
     } finally {
       setSubmittingUser(false)
     }
@@ -370,7 +397,8 @@ export default function SuperAdmin() {
     if (togglingUserId) return   // prevent double-click
     setTogglingUserId(u.uid)
     try {
-      await updateDoc(doc(db, 'users', u.uid), { isActive: !u.isActive })
+      const { error } = await supabase.from('profiles').update({ is_active: !u.isActive }).eq('id', u.uid)
+      if (error) throw new Error(error.message)
       await writeAuditLog({
         action: 'user_updated',
         entity: 'user',
@@ -388,6 +416,39 @@ export default function SuperAdmin() {
     }
   }
 
+  const submitResetPassword = async () => {
+    if (!resetUser || !appUser) return
+    if (resetPassword.length < 8) {
+      toast.error('Password must be at least 8 characters')
+      return
+    }
+    setResetSubmitting(true)
+    try {
+      await resetStaffPassword({ userId: resetUser.uid, password: resetPassword })
+      toast.success(`Password updated for ${resetUser.displayName}. Share it securely — it won’t be shown again.`)
+      setResetUser(null)
+      setResetPassword('')
+    } catch (e) {
+      toast.error(getAuthErrorMessage(e))
+    } finally {
+      setResetSubmitting(false)
+    }
+  }
+
+  const submitChangeRole = async () => {
+    if (!roleUser || !appUser) return
+    setRoleSubmitting(true)
+    try {
+      await changeStaffRole({ userId: roleUser.uid, role: roleValue })
+      toast.success(`Role updated to ${roleLabel(roleValue)}`)
+      setRoleUser(null)
+    } catch (e) {
+      toast.error(getAuthErrorMessage(e))
+    } finally {
+      setRoleSubmitting(false)
+    }
+  }
+
   // ─── Void sale ─────────────────────────────────────────────────────────────
 
   const voidSale = async () => {
@@ -398,12 +459,16 @@ export default function SuperAdmin() {
     }
     setVoidSubmitting(true)
     try {
-      await updateDoc(doc(db, 'sales', voidModal.id), {
-        status: 'voided',
-        voidReason: voidReason.trim(),
-        voidedBy: appUser.uid,
-        voidedAt: serverTimestamp(),
-      })
+      const { error } = await supabase
+        .from('sales')
+        .update({
+          status: 'voided',
+          void_reason: voidReason.trim(),
+          voided_by: appUser.uid,
+          voided_at: new Date().toISOString(),
+        })
+        .eq('id', voidModal.id)
+      if (error) throw new Error(error.message)
       await writeAuditLog({
         action: 'sale_voided',
         entity: 'sale',
@@ -413,7 +478,7 @@ export default function SuperAdmin() {
         performedByName: appUser.displayName,
         role: appUser.role,
       })
-      // Subtract this sale's numbers from the daily analytics doc so voided
+      // Subtract this sale's numbers from the daily analytics row so voided
       // sales are never counted in revenue/charts
       if (voidModal.createdAt) {
         reverseDailyAnalytics({
@@ -476,38 +541,55 @@ export default function SuperAdmin() {
 
     setReturnSubmitting(true)
     try {
-      // Single transaction: restore stock + update sale atomically
-      await runTransaction(db, async (tx) => {
-        for (const item of itemsToReturn) {
-          const qty = returnQtys[item.bookId]
-          const bookRef = doc(db, 'books', item.bookId)
-          const bookSnap = await tx.get(bookRef)
-          const current = (bookSnap.data()?.inStock ?? 0) as number
-          tx.update(bookRef, { inStock: increment(qty), updatedAt: serverTimestamp() })
-          const txRef = doc(collection(db, 'stockTransactions'))
-          tx.set(txRef, {
-            bookId: item.bookId,
-            bookName: item.bookName,
-            type: 'in',
-            quantity: qty,
-            previousStock: current,
-            newStock: current + qty,
-            reason: `Return — sale ${returnModal.id.slice(-8)}`,
-            reference: returnModal.id,
-            performedBy: appUser.uid,
-            performedByName: appUser.displayName,
-            createdAt: serverTimestamp(),
-          })
-        }
-        tx.update(doc(db, 'sales', returnModal.id), {
-          returnStatus: returnStatusValue,
-          returnedItems: returnedItemsList,
-          returnReason: returnReason.trim(),
-          returnedBy: appUser.uid,
-          returnedAt: serverTimestamp(),
-          returnRefundAmount: refundAmount,
+      // No client-side transaction primitive in Supabase — apply each item's
+      // stock restore sequentially, then update the sale record.
+      for (const item of itemsToReturn) {
+        const qty = returnQtys[item.bookId]
+
+        // eslint-disable-next-line no-await-in-loop
+        const { data: bookRow } = await supabase.from('books').select('in_stock').eq('id', item.bookId).maybeSingle()
+        const current = Number(bookRow?.in_stock ?? 0)
+
+        // eslint-disable-next-line no-await-in-loop
+        await applyInventoryDelta(item.bookId, bookstoreId, bookstoreId, qty)
+
+        // eslint-disable-next-line no-await-in-loop
+        await recordReturnMovement({
+          bookId: item.bookId,
+          bookName: item.bookName,
+          quantity: qty,
+          bookstoreId,
+          saleId: returnModal.id,
+          user: { uid: appUser.uid, displayName: appUser.displayName },
         })
-      })
+
+        // eslint-disable-next-line no-await-in-loop
+        await supabase.from('stock_transactions').insert({
+          book_id: item.bookId,
+          book_name: item.bookName,
+          type: 'in',
+          quantity: qty,
+          previous_stock: current,
+          new_stock: current + qty,
+          reason: `Return — sale ${returnModal.id.slice(-8)}`,
+          reference: returnModal.id,
+          performed_by: appUser.uid,
+          performed_by_name: appUser.displayName,
+        })
+      }
+
+      const { error: updateError } = await supabase
+        .from('sales')
+        .update({
+          return_status: returnStatusValue,
+          returned_items: returnedItemsList,
+          return_reason: returnReason.trim(),
+          returned_by: appUser.uid,
+          returned_at: new Date().toISOString(),
+          return_refund_amount: refundAmount,
+        })
+        .eq('id', returnModal.id)
+      if (updateError) throw new Error(updateError.message)
 
       setSales((prev) => prev.map((s) =>
         s.id === returnModal.id ? {
@@ -572,7 +654,7 @@ export default function SuperAdmin() {
       ['Sale ID', 'Date', 'Customer Name', 'Customer Phone', 'Items', 'Total (Rs.)', 'Payment Method', 'Cashier', 'Status'],
       filteredSales.map((s) => [
         s.id.slice(-8),
-        s.createdAt ? format(s.createdAt.toDate(), 'yyyy-MM-dd HH:mm') : '',
+        s.createdAt ? formatDateTime(s.createdAt) : '',
         s.customerName,
         s.customerPhone,
         s.items.reduce((n, i) => n + i.quantity, 0),
@@ -589,7 +671,7 @@ export default function SuperAdmin() {
       `audit_log_${format(new Date(), 'yyyy-MM-dd')}.csv`,
       ['Date', 'Action', 'Details', 'Performed By', 'Role'],
       filteredAudit.map((a) => [
-        a.createdAt ? format(a.createdAt.toDate(), 'yyyy-MM-dd HH:mm') : '',
+        a.createdAt ? formatDateTime(a.createdAt) : '',
         a.action,
         a.details,
         a.performedByName,
@@ -923,7 +1005,7 @@ export default function SuperAdmin() {
                     <td className="px-4 py-3 text-sm text-gray-500">{u.email}</td>
                     <td className="px-4 py-3">
                       <Badge variant={u.role === 'superadmin' ? 'blue' : u.role === 'admin' ? 'orange' : 'gray'}>
-                        {u.role}
+                        {roleLabel(u.role)}
                       </Badge>
                     </td>
                     <td className="px-4 py-3">
@@ -932,18 +1014,53 @@ export default function SuperAdmin() {
                       </Badge>
                     </td>
                     <td className="px-4 py-3">
-                      <button
-                        onClick={() => toggleUserActive(u)}
-                        disabled={u.uid === appUser?.uid || togglingUserId === u.uid}
-                        title={u.isActive ? 'Deactivate user' : 'Activate user'}
-                        className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 disabled:opacity-30 transition-colors"
-                      >
-                        {togglingUserId === u.uid
-                          ? <span className="h-4 w-4 inline-block animate-spin border-2 border-gray-300 border-t-gray-600 rounded-full" />
-                          : u.isActive
-                          ? <UserX className="h-4 w-4 text-red-500" />
-                          : <UserCheck className="h-4 w-4 text-green-500" />}
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => { setResetUser(u); setResetPassword('') }}
+                          disabled={u.uid === appUser?.uid}
+                          title="Reset password"
+                          className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
+                        >
+                          <KeyRound className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setRoleUser(u); setRoleValue(u.role) }}
+                          disabled={u.uid === appUser?.uid}
+                          title="Change role"
+                          className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
+                        >
+                          <Shield className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (u.email) {
+                              void sendStaffResetEmail({ email: u.email })
+                                .then(() => toast.success('Reset email sent'))
+                                .catch((e) => toast.error(getAuthErrorMessage(e)))
+                            }
+                          }}
+                          disabled={u.uid === appUser?.uid || !u.email}
+                          title="Send reset email"
+                          className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 disabled:opacity-30 text-xs font-medium px-2"
+                        >
+                          Email
+                        </button>
+                        <button
+                          onClick={() => toggleUserActive(u)}
+                          disabled={u.uid === appUser?.uid || togglingUserId === u.uid}
+                          title={u.isActive ? 'Deactivate user' : 'Activate user'}
+                          className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 disabled:opacity-30 transition-colors"
+                        >
+                          {togglingUserId === u.uid
+                            ? <span className="h-4 w-4 inline-block animate-spin border-2 border-gray-300 border-t-gray-600 rounded-full" />
+                            : u.isActive
+                            ? <UserX className="h-4 w-4 text-red-500" />
+                            : <UserCheck className="h-4 w-4 text-green-500" />}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -962,6 +1079,50 @@ export default function SuperAdmin() {
                 <Button type="submit" loading={submittingUser}>Create User</Button>
               </div>
             </form>
+          </Modal>
+
+          <Modal
+            open={!!resetUser}
+            onClose={() => { if (!resetSubmitting) { setResetUser(null); setResetPassword('') } }}
+            title={`Reset password · ${resetUser?.displayName ?? ''}`}
+            size="sm"
+          >
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">
+                Set a temporary password for {resetUser?.email}. Share it securely — it is shown only once here.
+              </p>
+              <Input
+                label="New password *"
+                type="password"
+                value={resetPassword}
+                onChange={(e) => setResetPassword(e.target.value)}
+                hint="Min 8 characters"
+              />
+              <div className="flex gap-3 justify-end">
+                <Button variant="outline" type="button" disabled={resetSubmitting} onClick={() => setResetUser(null)}>Cancel</Button>
+                <Button loading={resetSubmitting} onClick={() => void submitResetPassword()}>Reset password</Button>
+              </div>
+            </div>
+          </Modal>
+
+          <Modal
+            open={!!roleUser}
+            onClose={() => { if (!roleSubmitting) setRoleUser(null) }}
+            title={`Change role · ${roleUser?.displayName ?? ''}`}
+            size="sm"
+          >
+            <div className="space-y-4">
+              <Select
+                label="Role"
+                options={ROLE_OPTIONS}
+                value={roleValue}
+                onChange={(e) => setRoleValue(e.target.value as UserRole)}
+              />
+              <div className="flex gap-3 justify-end">
+                <Button variant="outline" type="button" disabled={roleSubmitting} onClick={() => setRoleUser(null)}>Cancel</Button>
+                <Button loading={roleSubmitting} onClick={() => void submitChangeRole()}>Save role</Button>
+              </div>
+            </div>
           </Modal>
         </div>
       )}

@@ -41,8 +41,9 @@ export default function Login() {
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
-          <img src="/logo.svg" alt="Nepalaya Publication" className="h-20 w-auto mx-auto object-contain mb-4" />
-          <h1 className="text-2xl font-bold text-gray-900">Book Central - Staff Portal</h1>
+          <img src="/logo.jpeg" alt="Nepalaya" className="h-20 w-auto mx-auto object-contain mb-4" />
+          <h1 className="text-2xl font-bold text-gray-900">Nepalaya Books</h1>
+          <p className="text-sm text-gray-500 mt-1">Publishing & retail operations</p>
         </div>
 
         {/* Card */}

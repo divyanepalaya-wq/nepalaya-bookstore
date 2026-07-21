@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore'
-import { db } from '@/lib/firebase'
+import { supabase } from '@/lib/supabase'
+import { mapBook } from '@/lib/mappers'
 import type { Book } from '@/types'
 
 interface BooksContextValue {
@@ -10,29 +10,42 @@ interface BooksContextValue {
 
 const BooksContext = createContext<BooksContextValue>({ books: [], loading: true })
 
-/**
- * Single Firestore listener for the books collection, shared across
- * Stock, POS, and SuperAdmin — prevents 3 concurrent identical listeners.
- * Soft-deleted books are filtered out at the source.
- */
 export function BooksProvider({ children }: { children: ReactNode }) {
   const [books, setBooks] = useState<Book[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const unsub = onSnapshot(
-      query(collection(db, 'books'), orderBy('name')),
-      (snap) => {
-        setBooks(
-          snap.docs
-            .map((d) => ({ id: d.id, ...d.data() }) as Book)
-            .filter((b) => !b.isDeleted)
-        )
+    let cancelled = false
+
+    async function load() {
+      const { data, error } = await supabase
+        .from('books')
+        .select('*')
+        .eq('is_deleted', false)
+        .order('name')
+      if (cancelled) return
+      if (error) {
+        console.warn('books load failed', error)
         setLoading(false)
-      },
-      () => setLoading(false)
-    )
-    return unsub
+        return
+      }
+      setBooks((data ?? []).map((r) => mapBook(r as Record<string, unknown>)))
+      setLoading(false)
+    }
+
+    void load()
+
+    const channel = supabase
+      .channel('books-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'books' }, () => {
+        void load()
+      })
+      .subscribe()
+
+    return () => {
+      cancelled = true
+      void supabase.removeChannel(channel)
+    }
   }, [])
 
   return <BooksContext.Provider value={{ books, loading }}>{children}</BooksContext.Provider>
