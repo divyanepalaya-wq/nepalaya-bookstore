@@ -36,7 +36,7 @@ const STATUS_BADGE: Record<BoxStatus, 'green' | 'yellow' | 'gray' | 'orange'> = 
 
 export default function BoxesPage() {
   const { appUser } = useAuth()
-  const { warehouses, activeWarehouse, bookstoreId } = useWarehouse()
+  const { warehouses, bookstoreId } = useWarehouse()
   const { books } = useBooks()
 
   const [boxes, setBoxes] = useState<(Box & { id: string })[]>([])
@@ -45,15 +45,11 @@ export default function BoxesPage() {
   const [reloadKey, setReloadKey] = useState(0)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
-  const [warehouseFilter, setWarehouseFilter] = useState(activeWarehouse?.id ?? '')
+  const [warehouseFilter, setWarehouseFilter] = useState('')
   const [selected, setSelected] = useState<(Box & { id: string })[]>([])
   const [replenishBox, setReplenishBox] = useState<(Box & { id: string }) | null>(null)
   const [replenishQty, setReplenishQty] = useState('')
   const [replenishing, setReplenishing] = useState(false)
-
-  useEffect(() => {
-    if (activeWarehouse && !warehouseFilter) setWarehouseFilter(activeWarehouse.id)
-  }, [activeWarehouse?.id])
 
   useEffect(() => {
     setLoading(true)
@@ -61,10 +57,9 @@ export default function BoxesPage() {
     let cancelled = false
 
     async function load() {
-      let q = supabase.from('boxes').select('*')
+      let q = supabase.from('boxes').select('*').order('created_at', { ascending: false })
       if (warehouseFilter) q = q.eq('warehouse_id', warehouseFilter)
       if (statusFilter) q = q.eq('status', statusFilter as BoxStatus)
-      if (!warehouseFilter && !statusFilter) q = q.order('created_at', { ascending: false })
 
       const { data, error } = await q
       if (cancelled) return
