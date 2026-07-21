@@ -40,6 +40,9 @@ export function mapBook(row: Record<string, unknown>): Book {
     inStock: Number(row.in_stock ?? 0),
     minStockAlert: Number(row.min_stock_alert ?? 5),
     description: (row.description as string) ?? undefined,
+    coverUrl: (row.cover_url as string) ?? undefined,
+    isbnLocked: Boolean(row.isbn_locked),
+    metadataSource: (row.metadata_source as string) ?? undefined,
     createdAt: row.created_at as Book['createdAt'],
     updatedAt: row.updated_at as Book['updatedAt'],
     createdBy: (row.created_by as string) ?? '',
@@ -62,6 +65,9 @@ export function bookToRow(b: Partial<Book> & { name?: string }): Record<string, 
   if (b.inStock !== undefined) row.in_stock = b.inStock
   if (b.minStockAlert !== undefined) row.min_stock_alert = b.minStockAlert
   if (b.description !== undefined) row.description = b.description
+  if (b.coverUrl !== undefined) row.cover_url = b.coverUrl
+  if (b.isbnLocked !== undefined) row.isbn_locked = b.isbnLocked
+  if (b.metadataSource !== undefined) row.metadata_source = b.metadataSource
   if (b.isDeleted !== undefined) row.is_deleted = b.isDeleted
   if (b.createdBy !== undefined) row.created_by = b.createdBy
   return row

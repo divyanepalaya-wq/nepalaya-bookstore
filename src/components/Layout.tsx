@@ -6,22 +6,18 @@ import {
   Menu,
   X,
   ChevronDown,
-  ChevronRight,
   User,
   Settings,
-  Warehouse,
   Boxes,
-  PackagePlus,
   ArrowRightLeft,
   ScanBarcode,
   Store,
-  LayoutDashboard,
-  ClipboardCheck,
-  MapPin,
   PanelLeftClose,
   PanelLeft,
-  BarChart2,
   BookOpen,
+  Package,
+  FileUp,
+  Database,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
@@ -51,7 +47,6 @@ export function Layout({ children }: { children?: ReactNode }) {
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem(COLLAPSE_KEY) === '1' } catch { return false }
   })
-  const [warehouseOpen, setWarehouseOpen] = useState(true)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [signOutConfirm, setSignOutConfirm] = useState(false)
   const [signingOut, setSigningOut] = useState(false)
@@ -70,24 +65,15 @@ export function Layout({ children }: { children?: ReactNode }) {
     })
   }, [])
 
-  const topNav: NavLinkItem[] = [
-    { to: '/', label: 'Dashboard', icon: <LayoutDashboard className="h-5 w-5" />, show: true, end: true },
+  const mainNav: NavLinkItem[] = [
+    { to: '/', label: 'Stock', icon: <Package className="h-5 w-5" />, show: true, end: true },
     { to: '/books', label: 'Books', icon: <BookOpen className="h-5 w-5" />, show: true },
-    { to: '/warehouse/scan', label: 'Scan', icon: <ScanBarcode className="h-5 w-5" />, show: role === 'cashier' },
-  ]
-
-  const warehouseNav: NavLinkItem[] = [
-    { to: '/warehouse/receive', label: 'Receive', icon: <PackagePlus className="h-4 w-4" />, show: wh },
-    { to: '/warehouse/transfers', label: 'Transfers', icon: <ArrowRightLeft className="h-4 w-4" />, show: wh },
-    { to: '/warehouse/cartons', label: 'Cartons', icon: <Boxes className="h-4 w-4" />, show: wh },
-    { to: '/warehouse/scan', label: 'Scan', icon: <ScanBarcode className="h-4 w-4" />, show: wh },
-    { to: '/warehouse/count', label: 'Cycle count', icon: <ClipboardCheck className="h-4 w-4" />, show: wh },
-    { to: '/warehouse/locations', label: 'Locations', icon: <MapPin className="h-4 w-4" />, show: wh },
-  ].filter((n) => n.show)
-
-  const bottomNav: NavLinkItem[] = [
-    { to: '/pos', label: 'Store POS', icon: <ShoppingCart className="h-5 w-5" />, show: pos },
-    { to: '/reports', label: 'Reports', icon: <BarChart2 className="h-5 w-5" />, show: wh || admin },
+    { to: '/warehouse/cartons', label: 'Cartons', icon: <Boxes className="h-5 w-5" />, show: wh || role === 'cashier' },
+    { to: '/move', label: 'Move', icon: <ArrowRightLeft className="h-5 w-5" />, show: wh },
+    { to: '/warehouse/scan', label: 'Scan', icon: <ScanBarcode className="h-5 w-5" />, show: true },
+    { to: '/import', label: 'Import', icon: <FileUp className="h-5 w-5" />, show: wh },
+    { to: '/pos', label: 'Sell', icon: <ShoppingCart className="h-5 w-5" />, show: pos },
+    { to: '/data', label: 'Data', icon: <Database className="h-5 w-5" />, show: wh || admin },
     { to: '/settings', label: 'Settings', icon: <Settings className="h-5 w-5" />, show: true },
   ].filter((n) => n.show)
 
@@ -95,15 +81,15 @@ export function Layout({ children }: { children?: ReactNode }) {
     role === 'cashier'
       ? [
           { to: '/pos', label: 'Sell', icon: <ShoppingCart className="h-5 w-5" /> },
-          { to: '/books', label: 'Books', icon: <BookOpen className="h-5 w-5" /> },
           { to: '/warehouse/scan', label: 'Scan', icon: <ScanBarcode className="h-5 w-5" /> },
-          { to: '/', label: 'Home', icon: <LayoutDashboard className="h-5 w-5" /> },
+          { to: '/', label: 'Stock', icon: <Package className="h-5 w-5" /> },
+          { to: '/books', label: 'Books', icon: <BookOpen className="h-5 w-5" /> },
         ]
       : [
-          { to: '/', label: 'Home', icon: <LayoutDashboard className="h-5 w-5" /> },
+          { to: '/', label: 'Stock', icon: <Package className="h-5 w-5" /> },
           { to: '/warehouse/scan', label: 'Scan', icon: <ScanBarcode className="h-5 w-5" /> },
-          { to: '/warehouse/receive', label: 'Receive', icon: <PackagePlus className="h-5 w-5" /> },
-          { to: '/pos', label: 'POS', icon: <Store className="h-5 w-5" /> },
+          { to: '/move', label: 'Move', icon: <ArrowRightLeft className="h-5 w-5" /> },
+          { to: '/pos', label: 'Sell', icon: <Store className="h-5 w-5" /> },
         ]
 
   const openGuide = guide.openGuide
@@ -121,9 +107,10 @@ export function Layout({ children }: { children?: ReactNode }) {
     'g h': () => navigate('/'),
     'g b': () => navigate('/books'),
     'g s': () => navigate('/warehouse/scan'),
-    'g r': () => navigate('/warehouse/receive'),
-    'g m': () => navigate('/warehouse/transfers'),
+    'g m': () => navigate('/move'),
+    'g i': () => navigate('/import'),
     'g p': () => navigate('/pos'),
+    'g d': () => navigate('/data'),
   }), [openGuide, closeGuide, guideIsOpen, navigate, toggleCollapse])
 
   useKeyboardShortcuts(shortcuts)
@@ -150,9 +137,9 @@ export function Layout({ children }: { children?: ReactNode }) {
 
   const prefetchRoute = (to: string) => {
     if (to === '/pos') void import('@/pages/POS')
-    else if (to === '/reports') void import('@/pages/Reports')
+    else if (to === '/data') void import('@/pages/DataView')
+    else if (to === '/import') void import('@/pages/ImportStock')
     else if (to === '/settings/users') void import('@/pages/SuperAdmin')
-    else if (to === '/warehouse/count') void import('@/pages/Stocktake')
   }
 
   const renderLink = (item: NavLinkItem) => (
@@ -171,7 +158,6 @@ export function Layout({ children }: { children?: ReactNode }) {
   )
 
   const logoSrc = '/logo.jpeg'
-  const inWarehouse = location.pathname.startsWith('/warehouse')
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -214,58 +200,7 @@ export function Layout({ children }: { children?: ReactNode }) {
               Menu
             </p>
           )}
-          {topNav.filter((n) => n.show).map(renderLink)}
-
-          {warehouseNav.length > 0 && (
-            <div className="mt-3 mb-1">
-              {!collapsed ? (
-                <button
-                  type="button"
-                  onClick={() => setWarehouseOpen((v) => !v)}
-                  className={cn(
-                    'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider',
-                    inWarehouse ? 'text-accent-700' : 'text-accent-400',
-                  )}
-                >
-                  <Warehouse className="h-4 w-4" />
-                  Warehouse
-                  <ChevronRight className={cn('ml-auto h-3.5 w-3.5 transition', warehouseOpen && 'rotate-90')} />
-                </button>
-              ) : (
-                <div className="flex justify-center py-1 text-accent-500" title="Warehouse">
-                  <Warehouse className="h-5 w-5" />
-                </div>
-              )}
-              {(warehouseOpen || collapsed) && (
-                <div className={cn(!collapsed && 'pl-2')}>
-                  {warehouseNav.map((item) => (
-                    <NavLink
-                      key={item.to}
-                      to={item.to}
-                      title={collapsed ? item.label : undefined}
-                      onClick={() => setSidebarOpen(false)}
-                      className={({ isActive }) =>
-                        cn(
-                          'flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium mb-0.5',
-                          collapsed && 'justify-center px-2',
-                          isActive
-                            ? 'bg-accent-50 text-accent-700 font-semibold'
-                            : 'text-gray-600 hover:bg-gray-100',
-                        )
-                      }
-                    >
-                      {item.icon}
-                      {!collapsed && item.label}
-                    </NavLink>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="mt-2">
-            {bottomNav.map(renderLink)}
-          </div>
+          {mainNav.map(renderLink)}
         </nav>
 
         <div className={cn('border-t border-gray-200 space-y-1', collapsed ? 'p-1.5' : 'p-3')}>
@@ -333,7 +268,7 @@ export function Layout({ children }: { children?: ReactNode }) {
 
         <div className="hidden lg:flex h-10 shrink-0 items-center justify-between border-b border-gray-100 bg-white px-4">
           <p className="text-xs text-gray-500">
-            Nepalaya Books · <span className="font-medium text-gray-700">Publishing & retail operations</span>
+            Nepalaya Books · <span className="font-medium text-gray-700">Warehouse → Backroom → Store → Sell</span>
           </p>
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-gray-400 hidden xl:inline">

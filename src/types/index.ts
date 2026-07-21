@@ -49,6 +49,9 @@ export interface Book {
   inStock: number
   minStockAlert: number
   description?: string
+  coverUrl?: string
+  isbnLocked?: boolean
+  metadataSource?: string
   createdAt: AppTimestamp
   updatedAt: AppTimestamp
   createdBy: string

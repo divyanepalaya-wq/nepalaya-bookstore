@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
-  ArrowLeft, PackagePlus, ArrowRightLeft, Store, ScanBarcode, Pencil,
+  ArrowLeft, PackagePlus, ArrowRightLeft, Store, ScanBarcode, Pencil, Sparkles, Lock,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { mapBox, mapMovement } from '@/lib/mappers'
@@ -10,10 +10,11 @@ import { useWarehouse } from '@/contexts/WarehouseContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { canWarehouse, cartonStatusLabel, cartonStatusBadge, LOCATION_LABELS } from '@/lib/roles'
 import { formatCurrency, formatDateTime, toMillis } from '@/lib/utils'
-import type { Box, InventoryMovement } from '@/types'
+import type { Box, InventoryMovement, Book } from '@/types'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { PageSpinner } from '@/components/ui/Spinner'
+import { BookEnrichModal } from '@/components/BookEnrichModal'
 
 export default function BookDetail() {
   const { id } = useParams<{ id: string }>()
@@ -26,9 +27,15 @@ export default function BookDetail() {
   } = useWarehouse()
   const [boxes, setBoxes] = useState<(Box & { id: string })[]>([])
   const [movements, setMovements] = useState<(InventoryMovement & { id: string })[]>([])
+  const [enrichOpen, setEnrichOpen] = useState(false)
+  const [localBook, setLocalBook] = useState<Book | null>(null)
 
   const wh = canWarehouse(appUser?.role)
-  const book = books.find((b) => b.id === id)
+  const fromCtx = books.find((b) => b.id === id)
+  const book = fromCtx
+    ? (localBook && localBook.id === id ? { ...fromCtx, ...localBook } : fromCtx)
+    : null
+
 
   useEffect(() => {
     if (!id) return
@@ -114,22 +121,46 @@ export default function BookDetail() {
           <ArrowLeft className="h-4 w-4" /> Books
         </button>
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">{book.name}</h1>
-            <p className="text-sm text-gray-500 mt-0.5">
-              {book.author || 'Unknown author'}
-              {book.isbn ? ` · ISBN ${book.isbn}` : ''}
-              {book.language ? ` · ${book.language}` : ''}
-              {book.category ? ` · ${book.category}` : ''}
-            </p>
-            <p className="text-sm text-gray-600 mt-2">
-              Cost {formatCurrency(book.costPrice ?? 0)} · MRP {formatCurrency(book.mrp)}
-            </p>
+          <div className="flex gap-4 min-w-0">
+            {book.coverUrl && (
+              <img
+                src={book.coverUrl}
+                alt=""
+                className="h-28 w-20 rounded-lg object-cover border border-gray-200 shrink-0 bg-gray-50"
+              />
+            )}
+            <div className="min-w-0">
+              <h1 className="text-2xl font-bold text-gray-900">{book.name}</h1>
+              <p className="text-sm text-gray-500 mt-0.5">
+                {book.author || 'Unknown author'}
+                {book.isbn ? (
+                  <span className="inline-flex items-center gap-1 ml-1">
+                    · ISBN {book.isbn}
+                    {book.isbnLocked && <Lock className="h-3 w-3 inline text-gray-400" />}
+                  </span>
+                ) : (
+                  <span className="text-amber-600"> · No ISBN</span>
+                )}
+                {book.language ? ` · ${book.language}` : ''}
+                {book.category ? ` · ${book.category}` : ''}
+              </p>
+              <p className="text-sm text-gray-600 mt-2">
+                Cost {formatCurrency(book.costPrice ?? 0)} · MRP {formatCurrency(book.mrp)}
+              </p>
+              {book.description && (
+                <p className="text-xs text-gray-500 mt-2 line-clamp-3 whitespace-pre-wrap">{book.description}</p>
+              )}
+            </div>
           </div>
           {wh && (
-            <Button variant="outline" size="sm" onClick={() => navigate('/books/manage')}>
-              <Pencil className="h-4 w-4" /> Edit in catalog
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" onClick={() => setEnrichOpen(true)}>
+                <Sparkles className="h-4 w-4" /> Find ISBN / cover
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => navigate('/books/manage')}>
+                <Pencil className="h-4 w-4" /> Edit in catalog
+              </Button>
+            </div>
           )}
         </div>
       </div>
@@ -227,6 +258,15 @@ export default function BookDetail() {
           Locations: {bookstoreWarehouse?.name ?? LOCATION_LABELS.bookstore} · sales via Store POS
         </p>
       </section>
+
+      {book && (
+        <BookEnrichModal
+          open={enrichOpen}
+          book={book}
+          onClose={() => setEnrichOpen(false)}
+          onSaved={(patch) => setLocalBook({ ...book, ...patch })}
+        />
+      )}
     </div>
   )
 }

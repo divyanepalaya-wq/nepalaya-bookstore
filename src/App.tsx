@@ -11,7 +11,7 @@ import { Layout } from '@/components/Layout'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { isSupabaseConfigured } from '@/lib/supabase'
 import Login from '@/pages/Login'
-import OpsDashboard from '@/pages/OpsDashboard'
+import StockOverview from '@/pages/StockOverview'
 import Books from '@/pages/Books'
 import BookDetail from '@/pages/BookDetail'
 import Settings from '@/pages/Settings'
@@ -20,6 +20,7 @@ import Receive from '@/pages/Receive'
 import BoxesPage from '@/pages/Boxes'
 import Transfers from '@/pages/Transfers'
 import Scan from '@/pages/Scan'
+import Move from '@/pages/Move'
 
 const POS = lazy(() => import('@/pages/POS'))
 const Discounts = lazy(() => import('@/pages/Discounts'))
@@ -30,6 +31,8 @@ const Inventory = lazy(() => import('@/pages/Inventory'))
 const StocktakePage = lazy(() => import('@/pages/Stocktake'))
 const ShelfLocationsPage = lazy(() => import('@/pages/ShelfLocations'))
 const Stock = lazy(() => import('@/pages/Stock'))
+const ImportStock = lazy(() => import('@/pages/ImportStock'))
+const DataView = lazy(() => import('@/pages/DataView'))
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -82,7 +85,7 @@ function App() {
                       </ProtectedRoute>
                     }
                   >
-                    <Route index element={<OpsDashboard />} />
+                    <Route index element={<StockOverview />} />
                     <Route path="books" element={<Books />} />
                     <Route path="books/manage" element={
                       <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
@@ -90,6 +93,22 @@ function App() {
                       </ProtectedRoute>
                     } />
                     <Route path="books/:id" element={<BookDetail />} />
+
+                    <Route path="move" element={
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
+                        <Move />
+                      </ProtectedRoute>
+                    } />
+                    <Route path="import" element={
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
+                        <Lazy><ImportStock /></Lazy>
+                      </ProtectedRoute>
+                    } />
+                    <Route path="data" element={
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
+                        <Lazy><DataView /></Lazy>
+                      </ProtectedRoute>
+                    } />
 
                     <Route path="pos" element={
                       <ProtectedRoute allowedRoles={['superadmin', 'admin', 'cashier']}>
@@ -146,21 +165,21 @@ function App() {
                         <Lazy><ShelfLocationsPage /></Lazy>
                       </ProtectedRoute>
                     } />
-                    <Route path="warehouse" element={<Navigate to="/warehouse/receive" replace />} />
+                    <Route path="warehouse" element={<Navigate to="/" replace />} />
                   </Route>
 
-                  <Route path="/stock" element={<Navigate to="/books" replace />} />
-                  <Route path="/inventory" element={<Navigate to="/reports" replace />} />
+                  <Route path="/stock" element={<Navigate to="/" replace />} />
+                  <Route path="/inventory" element={<Navigate to="/data" replace />} />
                   <Route path="/boxes" element={<Navigate to="/warehouse/cartons" replace />} />
-                  <Route path="/receive" element={<Navigate to="/warehouse/receive" replace />} />
-                  <Route path="/transfers" element={<Navigate to="/warehouse/transfers" replace />} />
+                  <Route path="/receive" element={<Navigate to="/import" replace />} />
+                  <Route path="/transfers" element={<Navigate to="/move" replace />} />
                   <Route path="/scan" element={<Navigate to="/warehouse/scan" replace />} />
                   <Route path="/stocktake" element={<Navigate to="/warehouse/count" replace />} />
                   <Route path="/shelves" element={<Navigate to="/warehouse/locations" replace />} />
-                  <Route path="/warehouses" element={<Navigate to="/warehouse/locations" replace />} />
+                  <Route path="/warehouses" element={<Navigate to="/settings/warehouses" replace />} />
                   <Route path="/warehouse-dashboard" element={<Navigate to="/" replace />} />
                   <Route path="/discounts" element={<Navigate to="/settings/discounts" replace />} />
-                  <Route path="/admin" element={<Navigate to="/reports" replace />} />
+                  <Route path="/admin" element={<Navigate to="/data" replace />} />
                   <Route path="/account" element={<Navigate to="/settings/account" replace />} />
 
                   <Route

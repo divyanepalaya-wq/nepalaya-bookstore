@@ -46,6 +46,9 @@ export interface Database {
           in_stock: number
           min_stock_alert: number
           description: string | null
+          cover_url: string | null
+          isbn_locked: boolean
+          metadata_source: string | null
           created_at: string
           updated_at: string
           created_by: string | null

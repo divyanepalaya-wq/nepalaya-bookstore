@@ -18,23 +18,18 @@ The import only maps Firebase UIDs → existing Supabase users **by email** for 
 ## Steps (when Firestore quota allows)
 
 ```bash
-# 1. Install Admin SDK (dev only)
-npm i -D firebase-admin
-
-# 2. Export Firestore data only (skips users collection)
+# Lean export (preferred — small pages, resume, skips users)
 export FIREBASE_SERVICE_ACCOUNT_PATH=./serviceAccount.json
-# Optional: resume after a partial run
-# export SKIP_EXISTING=1
-node scripts/migrate/export-firestore.mjs
+SKIP_EXISTING=1 node scripts/migrate/export-firestore-lean.mjs
 
-# 3. Import into Supabase (maps emails to existing Auth users — does not create accounts)
+# Import (maps emails to existing Auth users — does not create accounts)
 export SUPABASE_URL=https://fhvgfuzqqaqluljzvxnq.supabase.co
 export SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 node scripts/migrate/import-supabase.mjs
-
-# 4. Verify
 node scripts/migrate/verify.mjs
 ```
+
+Full export (same data, older script): `node scripts/migrate/export-firestore.mjs`
 
 If export hits `RESOURCE_EXHAUSTED` / `429 Quota exceeded`, wait for the Firestore free-tier quota to reset (usually daily, Pacific time) or enable billing on the Firebase/Google Cloud project, then re-run with `SKIP_EXISTING=1`.
 

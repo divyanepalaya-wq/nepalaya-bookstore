@@ -1,46 +1,46 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
-  PackagePlus, ArrowRightLeft, Store, ShoppingCart, HelpCircle,
-  ScanBarcode, Printer, Warehouse, Boxes, ChevronRight, Keyboard, BookOpen,
+  FileUp, ArrowRightLeft, Store, ShoppingCart, HelpCircle,
+  ScanBarcode, Printer, Warehouse, Boxes, ChevronRight, Keyboard, Package,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/utils'
 
-const GUIDE_SEEN_KEY = 'nepalaya-guide-seen-v2'
+const GUIDE_SEEN_KEY = 'nepalaya-guide-seen-v3'
 
 const FLOW_STEPS = [
   {
     n: 1,
-    title: 'Receive the print run',
-    body: 'At Main Warehouse: pick the book → total copies → copies per carton. System creates Full cartons + an Open carton for leftovers. Print labels and stick them on.',
-    action: '/warehouse/receive',
-    actionLabel: 'Receive',
-    icon: PackagePlus,
+    title: 'Import stock (or add cartons)',
+    body: 'Download the sheet template, fill titles / boxes / pieces, upload under Import. Print barcode labels and stick them on cartons.',
+    action: '/import',
+    actionLabel: 'Import',
+    icon: FileUp,
   },
   {
     n: 2,
-    title: 'Move cartons to the Backroom',
-                body: 'Scan cartons, then tap Send (ships immediately). Receive them at the destination. Use Save draft only if you need to pause.',
-    action: '/warehouse/transfers',
-    actionLabel: 'Transfers',
+    title: 'Move Warehouse → Backroom',
+    body: 'Scan a carton under Move, choose Backroom. One tap moves the whole carton.',
+    action: '/move',
+    actionLabel: 'Move',
     icon: ArrowRightLeft,
   },
   {
     n: 3,
-    title: 'Put books on sale',
-    body: 'Scan a Backroom carton → tap “Put on sale”. Copies move to Bookstore Floor and can be sold.',
-    action: '/warehouse/scan',
-    actionLabel: 'Scan carton',
+    title: 'Put pieces on sale',
+    body: 'Scan a Backroom carton → Store sale → enter how many copies. Those pieces become sellable at POS.',
+    action: '/move',
+    actionLabel: 'Put on sale',
     icon: Store,
   },
   {
     n: 4,
     title: 'Sell at the till',
-    body: 'Open Store POS. Stock comes only from Bookstore Floor — not from Full warehouse cartons.',
+    body: 'Open Sell (POS). Stock comes from the store floor only — not from sealed warehouse cartons.',
     action: '/pos',
-    actionLabel: 'Open POS',
+    actionLabel: 'Sell',
     icon: ShoppingCart,
   },
 ]
@@ -48,12 +48,13 @@ const FLOW_STEPS = [
 const SHORTCUTS = [
   { keys: '?', desc: 'Open this help guide' },
   { keys: '[', desc: 'Collapse / expand sidebar' },
-  { keys: 'G then H', desc: 'Dashboard' },
+  { keys: 'G then H', desc: 'Stock overview' },
   { keys: 'G then B', desc: 'Books' },
-  { keys: 'G then S', desc: 'Scan a carton' },
-  { keys: 'G then R', desc: 'Receive print run' },
-  { keys: 'G then M', desc: 'Transfers' },
-  { keys: 'G then P', desc: 'Store POS' },
+  { keys: 'G then S', desc: 'Scan' },
+  { keys: 'G then M', desc: 'Move' },
+  { keys: 'G then I', desc: 'Import' },
+  { keys: 'G then P', desc: 'Sell (POS)' },
+  { keys: 'G then D', desc: 'Data' },
   { keys: 'Esc', desc: 'Close camera / modals' },
 ]
 
@@ -98,16 +99,16 @@ export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
         {tab === 'flow' && (
           <div className="space-y-3">
             <p className="text-sm text-gray-600">
-              Books first. Inventory moves along one path — it never duplicates.
+              Simple path: Import → Move → Put on sale → Sell. Check Stock anytime for cartons and pieces.
             </p>
 
             <div className="flex flex-wrap items-center justify-center gap-1 sm:gap-2 py-3 px-2 rounded-xl bg-gradient-to-r from-blue-50 via-orange-50 to-green-50 border border-gray-100">
               {[
-                { label: 'Printer', icon: Printer, color: 'text-gray-700 bg-gray-100' },
-                { label: 'Main WH', icon: Warehouse, color: 'text-blue-700 bg-blue-100' },
+                { label: 'Import', icon: Printer, color: 'text-gray-700 bg-gray-100' },
+                { label: 'Warehouse', icon: Warehouse, color: 'text-blue-700 bg-blue-100' },
                 { label: 'Backroom', icon: Boxes, color: 'text-orange-700 bg-orange-100' },
-                { label: 'Store floor', icon: Store, color: 'text-green-700 bg-green-100' },
-                { label: 'Customer', icon: ShoppingCart, color: 'text-brand-700 bg-brand-100' },
+                { label: 'Store', icon: Store, color: 'text-green-700 bg-green-100' },
+                { label: 'Sell', icon: ShoppingCart, color: 'text-brand-700 bg-brand-100' },
               ].map((s, i) => (
                 <div key={s.label} className="flex items-center gap-1 sm:gap-2">
                   {i > 0 && <ChevronRight className="h-4 w-4 text-gray-300 shrink-0" />}
@@ -140,19 +141,19 @@ export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
             </ol>
 
             <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-xs text-amber-800 flex gap-2">
-              <BookOpen className="h-4 w-4 shrink-0 mt-0.5" />
+              <Package className="h-4 w-4 shrink-0 mt-0.5" />
               <span>
-                Open any title under <strong>Books</strong> to see stock by location, cartons, and recent movements.
+                <strong>Stock</strong> shows cartons + pieces by Warehouse / Backroom / Store. Use <strong>Data</strong> to browse everything.
               </span>
             </div>
 
             <div className="rounded-lg border border-gray-100 px-3 py-2 text-xs text-gray-600">
-              <p className="font-semibold text-gray-800 mb-1">One-hour training checklist</p>
+              <p className="font-semibold text-gray-800 mb-1">Quick checklist</p>
               <ul className="list-disc pl-4 space-y-0.5">
-                <li>Receive a small print run and print carton labels</li>
-                <li>Transfer one carton Main → Backroom</li>
-                <li>Scan → Put on sale → confirm store stock rose</li>
-                <li>Sell one copy in Store POS</li>
+                <li>Import a small sheet and print labels</li>
+                <li>Move one carton Warehouse → Backroom</li>
+                <li>Put a few pieces on sale → confirm Store stock rose</li>
+                <li>Sell one copy in Sell (POS)</li>
               </ul>
             </div>
           </div>
@@ -173,13 +174,13 @@ export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
                 <Warehouse className="h-4 w-4" /> Warehouse
               </p>
               <p className="text-xs text-blue-800 mt-1 leading-relaxed">
-                Receive, Transfers, Cartons, Scan, Cycle count, Locations. Put books on sale when the floor is low.
+                Stock, Cartons, Move, Scan, Import. Put books on sale when the floor is low.
               </p>
             </div>
             <div className="rounded-xl border border-gray-200 bg-gray-50/50 p-4">
               <p className="font-semibold text-gray-900 text-sm">Admin</p>
               <p className="text-xs text-gray-600 mt-1 leading-relaxed">
-                Everything above, plus Reports, discounts, users, and location setup.
+                Everything above, plus Data, staff, discounts, and advanced tools in Settings.
               </p>
             </div>
             <div className="rounded-lg border border-gray-100 px-3 py-2 text-xs text-gray-600 flex gap-2">
@@ -212,7 +213,7 @@ export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
             <div className="rounded-lg border border-gray-100 px-3 py-2.5">
               <p className="font-semibold text-gray-900">Carton already moved / in transit</p>
               <p className="text-xs text-gray-600 mt-1">
-                Open Transfers → find the transfer → Receive it at the destination. Don’t create a second transfer for the same carton.
+                Open Settings → Advanced → Transfers, find the transfer, and Receive it. Or scan the carton under Scan.
               </p>
             </div>
             <div className="rounded-lg border border-gray-100 px-3 py-2.5">

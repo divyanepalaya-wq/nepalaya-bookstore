@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { Search, AlertTriangle, BookOpen, Plus } from 'lucide-react'
+import { Search, AlertTriangle, BookOpen, Plus, Lock } from 'lucide-react'
 import { useBooks } from '@/contexts/BooksContext'
 import { useWarehouse } from '@/contexts/WarehouseContext'
 import { useAuth } from '@/contexts/AuthContext'
@@ -141,7 +141,14 @@ export default function Books() {
               >
                 <td className="px-4 py-3">
                   <p className="font-medium text-gray-900">{book.name}</p>
-                  <p className="text-xs text-gray-500">{book.author || '—'} {book.isbn ? `· ${book.isbn}` : ''}</p>
+                  <p className="text-xs text-gray-500 flex flex-wrap items-center gap-1">
+                    <span>{book.author || '—'}</span>
+                    {book.isbn ? (
+                      <span className="inline-flex items-center gap-0.5">· {book.isbn}{book.isbnLocked && <Lock className="h-3 w-3 text-gray-400" />}</span>
+                    ) : (
+                      <span className="text-amber-600">· No ISBN</span>
+                    )}
+                  </p>
                 </td>
                 <td className="px-4 py-3">
                   <span className={cn(
