@@ -9,6 +9,7 @@ import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Layout } from '@/components/Layout'
 import { PageSpinner } from '@/components/ui/Spinner'
+import { isSupabaseConfigured } from '@/lib/supabase'
 import Login from '@/pages/Login'
 import OpsDashboard from '@/pages/OpsDashboard'
 import Books from '@/pages/Books'
@@ -44,7 +45,26 @@ function Lazy({ children }: { children: React.ReactNode }) {
   return <Suspense fallback={<PageSpinner />}>{children}</Suspense>
 }
 
+function MissingConfig() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+      <div className="max-w-lg w-full space-y-3 text-center">
+        <h1 className="text-xl font-semibold text-slate-900">Supabase is not configured</h1>
+        <p className="text-sm text-slate-600">
+          Set <code className="text-xs bg-slate-100 px-1 rounded">VITE_SUPABASE_URL</code> and{' '}
+          <code className="text-xs bg-slate-100 px-1 rounded">VITE_SUPABASE_PUBLISHABLE_KEY</code> in
+          Vercel → Project Settings → Environment Variables, then redeploy.
+        </p>
+      </div>
+    </div>
+  )
+}
+
 function App() {
+  if (!isSupabaseConfigured) {
+    return <MissingConfig />
+  }
+
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>

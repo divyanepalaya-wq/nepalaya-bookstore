@@ -23,10 +23,10 @@ dist-ssr
 *.sln
 *.sw?
 
-# Environment
+# Environment — keep secrets out of git; .env.production holds public Vite keys only
 .env
 .env.local
-.env.production
+# .env.production is committed intentionally (VITE_* publishable keys only)
 
 # Migration secrets / dumps
 serviceAccount.json
