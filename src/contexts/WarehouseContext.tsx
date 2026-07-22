@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { mapWarehouse, mapInventory } from '@/lib/mappers'
+import { fetchAllPages } from '@/lib/fetchAll'
 import { WH_IDS } from '@/lib/inventoryService'
 import type { BookInventory, Warehouse, WorkspaceMode } from '@/types'
 
@@ -103,20 +104,27 @@ export function WarehouseProvider({ children }: { children: ReactNode }) {
     let cancelled = false
 
     async function load() {
-      const { data, error } = await supabase.from('book_inventory').select('*')
-      if (cancelled) return
-      if (error) {
-        console.warn('inventory load failed', error)
-        setInventoryLoading(false)
-        return
+      try {
+        const rows = await fetchAllPages<Record<string, unknown>>(async (from, to) => {
+          const res = await supabase
+            .from('book_inventory')
+            .select('*')
+            .order('book_id')
+            .range(from, to)
+          return { data: res.data as Record<string, unknown>[] | null, error: res.error }
+        })
+        if (cancelled) return
+        const map: Record<string, BookInventory> = {}
+        rows.forEach((r) => {
+          const inv = mapInventory(r)
+          map[inv.bookId] = inv
+        })
+        setInventoryMap(map)
+      } catch (e) {
+        console.warn('inventory load failed', e)
+      } finally {
+        if (!cancelled) setInventoryLoading(false)
       }
-      const map: Record<string, BookInventory> = {}
-      ;(data ?? []).forEach((r) => {
-        const inv = mapInventory(r as Record<string, unknown>)
-        map[inv.bookId] = inv
-      })
-      setInventoryMap(map)
-      setInventoryLoading(false)
     }
 
     void load()

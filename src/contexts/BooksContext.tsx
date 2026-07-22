@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { supabase } from '@/lib/supabase'
 import { mapBook } from '@/lib/mappers'
+import { fetchAllPages } from '@/lib/fetchAll'
 import type { Book } from '@/types'
 
 interface BooksContextValue {
@@ -18,19 +19,23 @@ export function BooksProvider({ children }: { children: ReactNode }) {
     let cancelled = false
 
     async function load() {
-      const { data, error } = await supabase
-        .from('books')
-        .select('*')
-        .eq('is_deleted', false)
-        .order('name')
-      if (cancelled) return
-      if (error) {
-        console.warn('books load failed', error)
-        setLoading(false)
-        return
+      try {
+        const rows = await fetchAllPages<Record<string, unknown>>(async (from, to) => {
+          const res = await supabase
+            .from('books')
+            .select('*')
+            .eq('is_deleted', false)
+            .order('name')
+            .range(from, to)
+          return { data: res.data as Record<string, unknown>[] | null, error: res.error }
+        })
+        if (cancelled) return
+        setBooks(rows.map((r) => mapBook(r)))
+      } catch (e) {
+        console.warn('books load failed', e)
+      } finally {
+        if (!cancelled) setLoading(false)
       }
-      setBooks((data ?? []).map((r) => mapBook(r as Record<string, unknown>)))
-      setLoading(false)
     }
 
     void load()
