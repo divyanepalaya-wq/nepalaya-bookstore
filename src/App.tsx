@@ -11,7 +11,13 @@ import { Layout } from '@/components/Layout'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { isSupabaseConfigured } from '@/lib/supabase'
 import Login from '@/pages/Login'
-import StockOverview from '@/pages/StockOverview'
+import HomeRedirect from '@/pages/HomeRedirect'
+import CartonSheet from '@/pages/CartonSheet'
+import AddStock from '@/pages/AddStock'
+import StoreShelf from '@/pages/StoreShelf'
+import StoreBackroom from '@/pages/StoreBackroom'
+import PutOnSale from '@/pages/PutOnSale'
+import VendorReceive from '@/pages/VendorReceive'
 import Books from '@/pages/Books'
 import BookDetail from '@/pages/BookDetail'
 import Settings from '@/pages/Settings'
@@ -85,7 +91,47 @@ function App() {
                       </ProtectedRoute>
                     }
                   >
-                    <Route index element={<StockOverview />} />
+                    <Route index element={<HomeRedirect />} />
+
+                    {/* Warehouse (Nepalaya) */}
+                    <Route path="cartons" element={
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
+                        <CartonSheet />
+                      </ProtectedRoute>
+                    } />
+                    <Route path="add-stock" element={
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
+                        <AddStock />
+                      </ProtectedRoute>
+                    } />
+                    <Route path="move" element={
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
+                        <Move />
+                      </ProtectedRoute>
+                    } />
+
+                    {/* Store */}
+                    <Route path="shelf" element={
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'cashier']}>
+                        <StoreShelf />
+                      </ProtectedRoute>
+                    } />
+                    <Route path="backroom" element={
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'cashier']}>
+                        <StoreBackroom />
+                      </ProtectedRoute>
+                    } />
+                    <Route path="put-on-sale" element={
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'cashier']}>
+                        <PutOnSale />
+                      </ProtectedRoute>
+                    } />
+                    <Route path="vendor" element={
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'cashier']}>
+                        <VendorReceive />
+                      </ProtectedRoute>
+                    } />
+
                     <Route path="books" element={<Books />} />
                     <Route path="books/manage" element={
                       <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
@@ -94,18 +140,13 @@ function App() {
                     } />
                     <Route path="books/:id" element={<BookDetail />} />
 
-                    <Route path="move" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
-                        <Move />
-                      </ProtectedRoute>
-                    } />
                     <Route path="import" element={
                       <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
                         <Lazy><ImportStock /></Lazy>
                       </ProtectedRoute>
                     } />
                     <Route path="data" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
+                      <ProtectedRoute allowedRoles={['superadmin']}>
                         <Lazy><DataView /></Lazy>
                       </ProtectedRoute>
                     } />
@@ -165,13 +206,13 @@ function App() {
                         <Lazy><ShelfLocationsPage /></Lazy>
                       </ProtectedRoute>
                     } />
-                    <Route path="warehouse" element={<Navigate to="/" replace />} />
+                    <Route path="warehouse" element={<Navigate to="/cartons" replace />} />
                   </Route>
 
-                  <Route path="/stock" element={<Navigate to="/" replace />} />
+                  <Route path="/stock" element={<Navigate to="/shelf" replace />} />
                   <Route path="/inventory" element={<Navigate to="/data" replace />} />
-                  <Route path="/boxes" element={<Navigate to="/warehouse/cartons" replace />} />
-                  <Route path="/receive" element={<Navigate to="/import" replace />} />
+                  <Route path="/boxes" element={<Navigate to="/cartons" replace />} />
+                  <Route path="/receive" element={<Navigate to="/add-stock" replace />} />
                   <Route path="/transfers" element={<Navigate to="/move" replace />} />
                   <Route path="/scan" element={<Navigate to="/warehouse/scan" replace />} />
                   <Route path="/stocktake" element={<Navigate to="/warehouse/count" replace />} />

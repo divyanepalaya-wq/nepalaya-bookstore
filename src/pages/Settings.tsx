@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import {
   User, Percent, Users, Warehouse, MapPin, ChevronRight, Package,
-  PackagePlus, ArrowRightLeft, ClipboardCheck, BarChart2,
+  PackagePlus, ArrowRightLeft, ClipboardCheck, BarChart2, BookOpen, Database, FileUp,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { roleLabel, isFullAdmin, canWarehouse } from '@/lib/roles'
@@ -13,6 +13,20 @@ const links = [
     desc: 'Password and profile',
     icon: User,
     show: () => true,
+  },
+  {
+    to: '/books',
+    label: 'Books catalog',
+    desc: 'Nepalaya / Nepali / English tags',
+    icon: BookOpen,
+    show: () => true,
+  },
+  {
+    to: '/data',
+    label: 'Data',
+    desc: 'Browse stock, cartons, sales',
+    icon: Database,
+    show: (role?: string) => role === 'superadmin',
   },
   {
     to: '/settings/discounts',
@@ -39,9 +53,23 @@ const links = [
 
 const advanced = [
   {
+    to: '/import',
+    label: 'Import sheet (Nepalaya)',
+    desc: 'Bulk cartons from CSV template',
+    icon: FileUp,
+    show: (role?: string) => role === 'admin' || role === 'superadmin',
+  },
+  {
+    to: '/add-stock',
+    label: 'Add stock',
+    desc: 'Create cartons for one title',
+    icon: PackagePlus,
+    show: (role?: string) => role === 'admin' || role === 'superadmin',
+  },
+  {
     to: '/warehouse/receive',
-    label: 'Receive (manual)',
-    desc: 'Create cartons one title at a time',
+    label: 'Receive (legacy)',
+    desc: 'Old receive form',
     icon: PackagePlus,
     show: (role?: string) => role === 'admin' || role === 'superadmin',
   },
@@ -92,7 +120,7 @@ export default function Settings() {
         <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
         <p className="text-sm text-gray-500 mt-0.5">
           Signed in as {appUser?.displayName} · {roleLabel(role)}
-          {isFullAdmin(role) ? ' (full access)' : canWarehouse(role) ? ' (ops)' : ''}
+          {isFullAdmin(role) ? ' (full access)' : canWarehouse(role) ? ' (warehouse)' : ' (store)'}
         </p>
       </div>
 

@@ -62,7 +62,9 @@ function bestMatch(title: string, books: Book[]): { book: Book | null; score: nu
   const n = norm(title)
   let best: Book | null = null
   let score = 0
-  for (const b of books) {
+  // Warehouse import is Nepalaya-only
+  const pool = books.filter((b) => b.language === 'Nepalaya' || !b.language)
+  for (const b of pool) {
     const s = similarity(n, norm(b.name))
     if (s > score) {
       score = s
@@ -252,16 +254,16 @@ export default function ImportStock() {
           Import stock
         </h1>
         <p className="text-sm text-gray-500 mt-0.5">
-          Download the template, fill cartons and pieces, upload — then print barcode labels
+          Nepalaya warehouse only · download template, upload, print labels
         </p>
       </div>
 
       <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-4">
         <ol className="text-sm text-gray-600 space-y-2 list-decimal list-inside">
-          <li>Download the CSV template</li>
+          <li>Download the CSV template (Nepalaya titles)</li>
           <li>Fill Book Title, Boxes, Pcs/Box, Total Pieces</li>
-          <li>Upload the file and confirm matches</li>
-          <li>Import into Warehouse or Backroom, then print labels</li>
+          <li>Upload and confirm matches</li>
+          <li>Import into Warehouse, then print labels</li>
         </ol>
 
         <div className="flex flex-wrap gap-2">

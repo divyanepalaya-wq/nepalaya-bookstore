@@ -8,37 +8,37 @@ import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/utils'
 
-const GUIDE_SEEN_KEY = 'nepalaya-guide-seen-v3'
+const GUIDE_SEEN_KEY = 'nepalaya-guide-seen-v4'
 
 const FLOW_STEPS = [
   {
     n: 1,
-    title: 'Import stock (or add cartons)',
-    body: 'Download the sheet template, fill titles / boxes / pieces, upload under Import. Print barcode labels and stick them on cartons.',
-    action: '/import',
-    actionLabel: 'Import',
-    icon: FileUp,
+    title: 'Add Nepalaya cartons',
+    body: 'Warehouse: open Cartons or Add stock. Enter pieces and pcs per carton (about 24). Print labels and stick them on.',
+    action: '/add-stock',
+    actionLabel: 'Add stock',
+    icon: Package,
   },
   {
     n: 2,
-    title: 'Move Warehouse → Backroom',
-    body: 'Scan a carton under Move, choose Backroom. One tap moves the whole carton.',
+    title: 'Send to backroom',
+    body: 'Scan a carton → Send to backroom (one tap).',
     action: '/move',
     actionLabel: 'Move',
     icon: ArrowRightLeft,
   },
   {
     n: 3,
-    title: 'Put pieces on sale',
-    body: 'Scan a Backroom carton → Store sale → enter how many copies. Those pieces become sellable at POS.',
-    action: '/move',
+    title: 'Put on shelf / vendor books',
+    body: 'Store: Put on sale from a backroom carton. For Nepali/English vendor books, use Receive vendor (straight to shelf, no carton).',
+    action: '/put-on-sale',
     actionLabel: 'Put on sale',
     icon: Store,
   },
   {
     n: 4,
-    title: 'Sell at the till',
-    body: 'Open Sell (POS). Stock comes from the store floor only — not from sealed warehouse cartons.',
+    title: 'Sell',
+    body: 'Open Sell. Stock comes from the store shelf only.',
     action: '/pos',
     actionLabel: 'Sell',
     icon: ShoppingCart,

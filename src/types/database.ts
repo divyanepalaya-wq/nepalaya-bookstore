@@ -344,6 +344,17 @@ export interface Database {
         }
         Returns: Json
       }
+      receive_vendor_stock: {
+        Args: {
+          p_book_id: string
+          p_book_name: string
+          p_quantity: number
+          p_bookstore_id: string
+          p_notes?: string
+          p_client_request_id?: string | null
+        }
+        Returns: Json
+      }
     }
   }
 }

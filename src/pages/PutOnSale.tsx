@@ -1,33 +1,29 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { ArrowRightLeft, ScanBarcode, Package } from 'lucide-react'
+import { Store, ScanBarcode } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useWarehouse } from '@/contexts/WarehouseContext'
-import {
-  findBoxByBarcode,
-  createAndPickTransfer,
-  receiveTransfer,
-} from '@/lib/inventoryService'
+import { findBoxByBarcode, replenishRetail } from '@/lib/inventoryService'
 import { cartonStatusLabel } from '@/lib/roles'
 import { opsErrorMessage } from '@/lib/opsErrors'
-import type { Box, TransferItem } from '@/types'
+import type { Box } from '@/types'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Badge } from '@/components/ui/Badge'
 import CameraScan from '@/components/CameraScan'
 
-/** Warehouse: scan carton → send to backroom (one tap). */
-export default function Move() {
+/** Store: scan backroom carton → put pieces on shelf. */
+export default function PutOnSale() {
   const { appUser } = useAuth()
-  const { primaryWarehouse, bufferWarehouse, bookstoreId } = useWarehouse()
-
-  const [barcode, setBarcode] = useState('')
+  const { bufferWarehouse, bookstoreId } = useWarehouse()
+  const [params] = useSearchParams()
+  const [barcode, setBarcode] = useState(params.get('box') ?? '')
   const [box, setBox] = useState<(Box & { id: string }) | null>(null)
+  const [qty, setQty] = useState('')
   const [busy, setBusy] = useState(false)
   const [cameraOpen, setCameraOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
-
-  const primaryId = primaryWarehouse?.id ?? 'wh-primary'
   const bufferId = bufferWarehouse?.id ?? 'wh-buffer'
 
   const lookup = async (code: string) => {
@@ -35,64 +31,50 @@ export default function Move() {
     if (!trimmed) return
     try {
       const found = await findBoxByBarcode(trimmed)
-      if (!found) {
-        toast.error('Carton not found')
+      if (!found || found.quantity <= 0) {
+        toast.error('Carton not found or empty')
         setBox(null)
         return
-      }
-      if (found.status === 'empty' || found.quantity <= 0) {
-        toast.error('Carton is empty')
-        setBox(null)
-        return
-      }
-      if (found.status === 'in_transit') {
-        toast.error('Already in transit')
-        setBox(found)
-        return
-      }
-      if (found.warehouseId === bufferId) {
-        toast.error('Already in backroom')
       }
       setBox(found)
+      setQty(String(found.quantity))
+      if (found.warehouseId !== bufferId) {
+        toast('Carton is not in backroom — you can still put pieces on sale', { icon: 'ℹ️' })
+      }
     } catch (e) {
       toast.error(opsErrorMessage(e, 'Lookup failed'))
     }
   }
 
-  const canSend =
-    !!appUser &&
-    !!box &&
-    box.status !== 'in_transit' &&
-    box.quantity > 0 &&
-    box.warehouseId !== bufferId
+  useEffect(() => {
+    const pre = params.get('box')
+    if (pre) void lookup(pre)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  const handleSend = async () => {
-    if (!appUser || !box || !canSend) return
+  const handlePut = async () => {
+    if (!appUser || !box) return
+    const n = parseInt(qty, 10)
+    if (!n || n <= 0 || n > box.quantity) {
+      toast.error(`Enter 1–${box.quantity}`)
+      return
+    }
     setBusy(true)
     try {
-      const item: TransferItem = {
+      await replenishRetail({
         boxId: box.id,
-        barcode: box.barcode,
-        bookId: box.bookId,
-        bookName: box.bookName,
-        quantity: box.quantity,
-        shelfLocation: box.shelfLocation,
-      }
-      const fromId = box.warehouseId || primaryId
-      const transferId = await createAndPickTransfer({
-        fromWarehouseId: fromId,
-        toWarehouseId: bufferId,
-        items: [item],
+        quantity: n,
+        bufferWarehouseId: bufferId,
         bookstoreId,
-        notes: 'Move to backroom',
+        user: appUser,
       })
-      await receiveTransfer({ transferId, bookstoreId, user: appUser })
-      toast.success('Sent to backroom · ब्याक रुममा पठाइयो')
+      toast.success(`Put ${n} on shelf`)
       setBox(null)
       setBarcode('')
+      setQty('')
       inputRef.current?.focus()
     } catch (e) {
-      toast.error(opsErrorMessage(e, 'Move failed'))
+      toast.error(opsErrorMessage(e, 'Failed'))
     } finally {
       setBusy(false)
     }
@@ -102,11 +84,11 @@ export default function Move() {
     <div className="mx-auto max-w-lg space-y-5">
       <div>
         <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-          <ArrowRightLeft className="h-7 w-7 text-accent-600" />
-          Move
+          <Store className="h-7 w-7 text-green-600" />
+          Put on sale
         </h1>
         <p className="text-sm text-gray-500 mt-0.5">
-          Warehouse → Backroom · ब्याक रुममा पठाउनुहोस्
+          Backroom → shelf · सेल्फमा राख्नुहोस्
         </p>
       </div>
 
@@ -116,7 +98,7 @@ export default function Move() {
             ref={inputRef}
             label="Carton barcode"
             className="min-h-12 text-base"
-            placeholder="Scan or type…"
+            placeholder="Scan NPBX-…"
             value={barcode}
             onChange={(e) => setBarcode(e.target.value)}
             onKeyDown={(e) => {
@@ -143,23 +125,33 @@ export default function Move() {
               <p className="font-mono text-sm font-semibold">{box.barcode}</p>
               <Badge variant={box.status === 'sealed' ? 'green' : 'yellow'}>{cartonStatusLabel(box.status)}</Badge>
             </div>
-            <p className="text-lg font-semibold text-gray-900">{box.bookName}</p>
-            <p className="text-sm text-gray-500">{box.quantity} pcs</p>
+            <p className="text-base font-semibold text-gray-900">{box.bookName}</p>
+            <p className="text-sm text-gray-500">{box.quantity} pcs in carton</p>
           </div>
         )}
       </div>
 
-      {box && box.status !== 'in_transit' && (
-        <Button
-          size="lg"
-          className="w-full min-h-16 text-lg"
-          loading={busy}
-          disabled={!canSend || busy}
-          onClick={() => void handleSend()}
-        >
-          <Package className="h-6 w-6" />
-          Send to backroom
-        </Button>
+      {box && (
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 space-y-4">
+          <Input
+            label="Pieces to put on shelf"
+            type="number"
+            min={1}
+            max={box.quantity}
+            className="min-h-14 text-2xl font-bold"
+            value={qty}
+            onChange={(e) => setQty(e.target.value)}
+          />
+          <Button
+            size="lg"
+            className="w-full min-h-14 text-lg"
+            loading={busy}
+            disabled={busy}
+            onClick={() => void handlePut()}
+          >
+            Put on shelf
+          </Button>
+        </div>
       )}
 
       {cameraOpen && (

@@ -60,9 +60,10 @@ export default function Receive() {
     }))
 
   const filteredBooks = useMemo(() => {
+    const nepalaya = books.filter((b) => b.language === 'Nepalaya')
     const q = bookSearch.trim().toLowerCase()
-    if (!q) return books.slice(0, 30)
-    return books.filter(
+    if (!q) return nepalaya.slice(0, 30)
+    return nepalaya.filter(
       (b) =>
         b.name.toLowerCase().includes(q) ||
         (b.author ?? '').toLowerCase().includes(q) ||
@@ -79,6 +80,10 @@ export default function Receive() {
 
   const handleReceive = async () => {
     if (!appUser || !selectedBook || !selectedWh) return
+    if (selectedBook.language !== 'Nepalaya') {
+      toast.error('Warehouse receive is Nepalaya only. Use Receive vendor for Nepali/English.')
+      return
+    }
     if (qty <= 0 || perBox <= 0) {
       toast.error('Enter valid quantity and copies per carton')
       return

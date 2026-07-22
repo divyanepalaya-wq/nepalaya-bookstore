@@ -27,7 +27,23 @@ export function canPOS(role: UserRole | undefined): boolean {
   return role === 'cashier' || role === 'admin' || role === 'superadmin'
 }
 
-/** Carton status: DB sealed → UI Full */
+/** Warehouse operator (Ramesh) — Nepalaya cartons. */
+export function isWarehouseOperator(role: UserRole | undefined): boolean {
+  return role === 'admin'
+}
+
+/** Store floor / cashier. */
+export function isStoreOperator(role: UserRole | undefined): boolean {
+  return role === 'cashier'
+}
+
+/** Default landing path by role. */
+export function homePath(role: UserRole | undefined): string {
+  if (role === 'cashier') return '/shelf'
+  if (role === 'admin') return '/cartons'
+  return '/shelf' // superadmin sees store-first + warehouse links
+}
+
 export function cartonStatusLabel(status: BoxStatus | string): string {
   if (status === 'sealed') return 'Full'
   if (status === 'open') return 'Open'

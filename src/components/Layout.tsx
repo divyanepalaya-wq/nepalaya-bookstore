@@ -14,14 +14,20 @@ import {
   Store,
   PanelLeftClose,
   PanelLeft,
-  BookOpen,
   Package,
-  FileUp,
-  Database,
+  PackagePlus,
+  Truck,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
-import { roleLabel, canWarehouse, canPOS, isFullAdmin } from '@/lib/roles'
+import {
+  roleLabel,
+  canWarehouse,
+  canPOS,
+  isFullAdmin,
+  isWarehouseOperator,
+  isStoreOperator,
+} from '@/lib/roles'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { UserAvatar } from '@/components/ui/Avatar'
@@ -53,9 +59,11 @@ export function Layout({ children }: { children?: ReactNode }) {
   const guide = useFirstRunGuide()
 
   const role = appUser?.role
+  const warehouseOnly = isWarehouseOperator(role)
+  const storeOnly = isStoreOperator(role)
+  const admin = isFullAdmin(role)
   const wh = canWarehouse(role)
   const pos = canPOS(role)
-  const admin = isFullAdmin(role)
 
   const toggleCollapse = useCallback(() => {
     setCollapsed((v) => {
@@ -65,32 +73,46 @@ export function Layout({ children }: { children?: ReactNode }) {
     })
   }, [])
 
-  const mainNav: NavLinkItem[] = [
-    { to: '/', label: 'Stock', icon: <Package className="h-5 w-5" />, show: true, end: true },
-    { to: '/books', label: 'Books', icon: <BookOpen className="h-5 w-5" />, show: true },
-    { to: '/warehouse/cartons', label: 'Cartons', icon: <Boxes className="h-5 w-5" />, show: wh || role === 'cashier' },
+  // Warehouse (Ramesh): Cartons, Add stock, Move, Scan
+  const warehouseNav: NavLinkItem[] = [
+    { to: '/cartons', label: 'Cartons', icon: <Boxes className="h-5 w-5" />, show: wh },
+    { to: '/add-stock', label: 'Add stock', icon: <PackagePlus className="h-5 w-5" />, show: wh },
     { to: '/move', label: 'Move', icon: <ArrowRightLeft className="h-5 w-5" />, show: wh },
-    { to: '/warehouse/scan', label: 'Scan', icon: <ScanBarcode className="h-5 w-5" />, show: true },
-    { to: '/import', label: 'Import', icon: <FileUp className="h-5 w-5" />, show: wh },
-    { to: '/pos', label: 'Sell', icon: <ShoppingCart className="h-5 w-5" />, show: pos },
-    { to: '/data', label: 'Data', icon: <Database className="h-5 w-5" />, show: wh || admin },
-    { to: '/settings', label: 'Settings', icon: <Settings className="h-5 w-5" />, show: true },
-  ].filter((n) => n.show)
+    { to: '/warehouse/scan', label: 'Scan', icon: <ScanBarcode className="h-5 w-5" />, show: wh },
+  ]
 
-  const mobileTabs =
-    role === 'cashier'
-      ? [
-          { to: '/pos', label: 'Sell', icon: <ShoppingCart className="h-5 w-5" /> },
-          { to: '/warehouse/scan', label: 'Scan', icon: <ScanBarcode className="h-5 w-5" /> },
-          { to: '/', label: 'Stock', icon: <Package className="h-5 w-5" /> },
-          { to: '/books', label: 'Books', icon: <BookOpen className="h-5 w-5" /> },
-        ]
-      : [
-          { to: '/', label: 'Stock', icon: <Package className="h-5 w-5" /> },
-          { to: '/warehouse/scan', label: 'Scan', icon: <ScanBarcode className="h-5 w-5" /> },
-          { to: '/move', label: 'Move', icon: <ArrowRightLeft className="h-5 w-5" /> },
-          { to: '/pos', label: 'Sell', icon: <Store className="h-5 w-5" /> },
-        ]
+  // Store: Shelf, Backroom, Put on sale, Receive vendor, Sell
+  const storeNav: NavLinkItem[] = [
+    { to: '/shelf', label: 'Shelf', icon: <Store className="h-5 w-5" />, show: pos },
+    { to: '/backroom', label: 'Backroom', icon: <Package className="h-5 w-5" />, show: pos },
+    { to: '/put-on-sale', label: 'Put on sale', icon: <Store className="h-5 w-5" />, show: pos },
+    { to: '/vendor', label: 'Receive vendor', icon: <Truck className="h-5 w-5" />, show: pos },
+    { to: '/pos', label: 'Sell', icon: <ShoppingCart className="h-5 w-5" />, show: pos },
+  ]
+
+  const mainNav: NavLinkItem[] = (
+    warehouseOnly
+      ? warehouseNav
+      : storeOnly
+        ? storeNav
+        : [...storeNav, ...warehouseNav]
+  )
+    .filter((n) => n.show)
+    .concat([{ to: '/settings', label: 'Settings', icon: <Settings className="h-5 w-5" />, show: true }])
+
+  const mobileTabs = warehouseOnly
+    ? [
+        { to: '/cartons', label: 'Cartons', icon: <Boxes className="h-5 w-5" /> },
+        { to: '/add-stock', label: 'Add', icon: <PackagePlus className="h-5 w-5" /> },
+        { to: '/move', label: 'Move', icon: <ArrowRightLeft className="h-5 w-5" /> },
+        { to: '/warehouse/scan', label: 'Scan', icon: <ScanBarcode className="h-5 w-5" /> },
+      ]
+    : [
+        { to: '/shelf', label: 'Shelf', icon: <Store className="h-5 w-5" /> },
+        { to: '/backroom', label: 'Back', icon: <Package className="h-5 w-5" /> },
+        { to: '/vendor', label: 'Vendor', icon: <Truck className="h-5 w-5" /> },
+        { to: '/pos', label: 'Sell', icon: <ShoppingCart className="h-5 w-5" /> },
+      ]
 
   const openGuide = guide.openGuide
   const closeGuide = guide.close
@@ -104,14 +126,11 @@ export function Layout({ children }: { children?: ReactNode }) {
       setUserMenuOpen(false)
       if (guideIsOpen) closeGuide()
     },
-    'g h': () => navigate('/'),
-    'g b': () => navigate('/books'),
+    'g h': () => navigate(warehouseOnly ? '/cartons' : '/shelf'),
     'g s': () => navigate('/warehouse/scan'),
     'g m': () => navigate('/move'),
-    'g i': () => navigate('/import'),
     'g p': () => navigate('/pos'),
-    'g d': () => navigate('/data'),
-  }), [openGuide, closeGuide, guideIsOpen, navigate, toggleCollapse])
+  }), [openGuide, closeGuide, guideIsOpen, navigate, toggleCollapse, warehouseOnly])
 
   useKeyboardShortcuts(shortcuts)
 
@@ -128,19 +147,12 @@ export function Layout({ children }: { children?: ReactNode }) {
 
   const linkClass = (isActive: boolean) =>
     cn(
-      'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors mb-0.5',
+      'flex items-center gap-3 rounded-xl px-3 py-3 text-base font-semibold transition-colors mb-0.5',
       collapsed && 'justify-center px-2',
       isActive
-        ? 'bg-accent-50 text-accent-700 font-semibold'
+        ? 'bg-accent-50 text-accent-700'
         : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
     )
-
-  const prefetchRoute = (to: string) => {
-    if (to === '/pos') void import('@/pages/POS')
-    else if (to === '/data') void import('@/pages/DataView')
-    else if (to === '/import') void import('@/pages/ImportStock')
-    else if (to === '/settings/users') void import('@/pages/SuperAdmin')
-  }
 
   const renderLink = (item: NavLinkItem) => (
     <NavLink
@@ -149,7 +161,6 @@ export function Layout({ children }: { children?: ReactNode }) {
       end={item.end}
       title={collapsed ? item.label : undefined}
       onClick={() => setSidebarOpen(false)}
-      onMouseEnter={() => prefetchRoute(item.to)}
       className={({ isActive }) => linkClass(isActive)}
     >
       {item.icon}
@@ -158,6 +169,11 @@ export function Layout({ children }: { children?: ReactNode }) {
   )
 
   const logoSrc = '/logo.jpeg'
+  const modeLabel = warehouseOnly
+    ? 'Warehouse · Nepalaya cartons'
+    : storeOnly
+      ? 'Store · Shelf & sell'
+      : 'Admin · Store + Warehouse'
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -196,11 +212,16 @@ export function Layout({ children }: { children?: ReactNode }) {
 
         <nav className={cn('flex-1 overflow-y-auto py-3', collapsed ? 'px-1.5' : 'px-3')}>
           {!collapsed && (
-            <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-wider text-accent-400">
-              Menu
+            <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-wider text-accent-400">
+              {modeLabel}
             </p>
           )}
           {mainNav.map(renderLink)}
+          {admin && !collapsed && (
+            <p className="mt-4 px-3 text-[10px] text-gray-400">
+              Books & Data live under Settings
+            </p>
+          )}
         </nav>
 
         <div className={cn('border-t border-gray-200 space-y-1', collapsed ? 'p-1.5' : 'p-3')}>
@@ -257,7 +278,7 @@ export function Layout({ children }: { children?: ReactNode }) {
 
       <div className="flex flex-1 flex-col overflow-hidden min-w-0">
         <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 bg-white px-3 lg:hidden">
-          <button type="button" onClick={() => setSidebarOpen(true)} className="flex h-9 w-9 items-center justify-center rounded-lg hover:bg-gray-100">
+          <button type="button" onClick={() => setSidebarOpen(true)} className="flex h-10 w-10 items-center justify-center rounded-lg hover:bg-gray-100">
             <Menu className="h-5 w-5" />
           </button>
           <img src={logoSrc} alt="Nepalaya" className="h-7 w-auto object-contain" />
@@ -267,16 +288,8 @@ export function Layout({ children }: { children?: ReactNode }) {
         </header>
 
         <div className="hidden lg:flex h-10 shrink-0 items-center justify-between border-b border-gray-100 bg-white px-4">
-          <p className="text-xs text-gray-500">
-            Nepalaya Books · <span className="font-medium text-gray-700">Warehouse → Backroom → Store → Sell</span>
-          </p>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] text-gray-400 hidden xl:inline">
-              <kbd className="rounded bg-gray-100 px-1 font-mono">?</kbd> help ·{' '}
-              <kbd className="rounded bg-gray-100 px-1 font-mono">[</kbd> sidebar
-            </span>
-            <HelpButton onClick={guide.openGuide} />
-          </div>
+          <p className="text-xs text-gray-500">{modeLabel}</p>
+          <HelpButton onClick={guide.openGuide} />
         </div>
 
         <main className="flex-1 overflow-y-auto p-4 lg:p-6 pb-24 lg:pb-6">
@@ -284,16 +297,16 @@ export function Layout({ children }: { children?: ReactNode }) {
         </main>
 
         <nav className="lg:hidden fixed bottom-0 inset-x-0 z-20 bg-white border-t border-gray-200 safe-area-pb">
-          <div className="grid grid-cols-4">
+          <div className={cn('grid', mobileTabs.length === 5 ? 'grid-cols-5' : 'grid-cols-4')}>
             {mobileTabs.map((tab) => {
-              const active = tab.to === '/' ? location.pathname === '/' : location.pathname.startsWith(tab.to)
+              const active = location.pathname === tab.to || location.pathname.startsWith(tab.to + '/')
               return (
                 <button
                   key={tab.to}
                   type="button"
                   onClick={() => navigate(tab.to)}
                   className={cn(
-                    'flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium',
+                    'flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-semibold',
                     active ? 'text-accent-700' : 'text-gray-400',
                   )}
                 >

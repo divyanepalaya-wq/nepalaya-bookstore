@@ -171,6 +171,77 @@ export async function receiveBoxes(params: ReceiveBoxesParams): Promise<ReceiveB
   return { boxes }
 }
 
+/** Third-party Nepali/English books → bookstore shelf (no carton). */
+export async function receiveVendorStock(params: {
+  bookId: string
+  bookName: string
+  quantity: number
+  bookstoreId: string
+  notes?: string
+  user: AppUser
+}): Promise<void> {
+  const { bookId, bookName, quantity, bookstoreId, notes, user } = params
+  if (quantity <= 0) throw new Error('Quantity must be positive')
+
+  const { error } = await supabase.rpc('receive_vendor_stock', {
+    p_book_id: bookId,
+    p_book_name: bookName,
+    p_quantity: quantity,
+    p_bookstore_id: bookstoreId,
+    p_notes: notes ?? '',
+    p_client_request_id: newRequestId(),
+  } as never)
+
+  if (error) {
+    // Fallback if migration 006 not applied yet
+    if (!/function|schema|does not exist|PGRST/i.test(error.message)) {
+      fail(error, 'Vendor receive failed')
+    }
+    const { data: inv } = await supabase
+      .from('book_inventory')
+      .select('*')
+      .eq('book_id', bookId)
+      .maybeSingle()
+    const by = { ...((inv?.by_warehouse as Record<string, number>) ?? {}) }
+    const nextRetail = (Number(by[bookstoreId] ?? inv?.retail_qty ?? 0) || 0) + quantity
+    by[bookstoreId] = nextRetail
+    let whTotal = 0
+    for (const [k, v] of Object.entries(by)) {
+      if (k === bookstoreId) continue
+      whTotal += Number(v) || 0
+    }
+    const { error: uerr } = await supabase.from('book_inventory').upsert({
+      book_id: bookId,
+      by_warehouse: by,
+      total_warehouse_qty: whTotal,
+      retail_qty: nextRetail,
+      updated_at: new Date().toISOString(),
+    })
+    if (uerr) fail(uerr, 'Vendor receive failed')
+    await supabase.from('books').update({ in_stock: nextRetail }).eq('id', bookId)
+    await writeMovement({
+      type: 'receive',
+      bookId,
+      bookName,
+      quantity,
+      warehouseId: bookstoreId,
+      reason: notes?.trim() || 'Vendor delivery to store shelf',
+      performedBy: user.uid,
+      performedByName: user.displayName,
+    })
+  }
+
+  await writeAuditLog({
+    action: 'vendor_receive',
+    entity: 'book',
+    entityId: bookId,
+    details: `Vendor received ${quantity}x "${bookName}" onto store shelf`,
+    performedBy: user.uid,
+    performedByName: user.displayName,
+    role: user.role,
+  })
+}
+
 // ─── Transfers ────────────────────────────────────────────────────────────────
 
 export async function createTransfer(params: {
