@@ -10,6 +10,7 @@ import { canWarehouse, isFullAdmin } from '@/lib/roles'
 import { CATEGORY_OPTIONS, categoryLabel, isNepalaya, isThirdParty } from '@/lib/bookCategories'
 import type { Book, BookType } from '@/types'
 import { cn } from '@/lib/utils'
+import { fuzzyFilterBooks } from '@/lib/fuzzySearch'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Badge } from '@/components/ui/Badge'
@@ -41,24 +42,19 @@ export default function Books() {
   const canEdit = canWarehouse(appUser?.role) || isFullAdmin(appUser?.role)
 
   const rows = useMemo(() => {
-    const q = deferredSearch.trim().toLowerCase()
-    return books
-      .filter((b) => !catFilter || b.language === catFilter)
-      .filter((b) => {
-        if (!q) return true
-        return (
-          b.name.toLowerCase().includes(q) ||
-          (b.author ?? '').toLowerCase().includes(q) ||
-          (b.isbn ?? '').includes(q)
-        )
-      })
-      .map((b) => {
-        const store = getRetailStock(b.id, b.inStock)
-        const main = primaryWarehouse ? getWarehouseStock(b.id, primaryWarehouse.id) : 0
-        const back = bufferWarehouse ? getWarehouseStock(b.id, bufferWarehouse.id) : 0
-        return { book: b, store, main, back, total: store + main + back }
-      })
-      .sort((a, b) => a.book.name.localeCompare(b.book.name))
+    const pool = catFilter ? books.filter((b) => b.language === catFilter) : books
+    const matched = fuzzyFilterBooks(pool, deferredSearch, {
+      minScore: deferredSearch.trim() ? 0.4 : 0,
+      limit: pool.length,
+    })
+    // When empty query, fuzzy returns slice — use full sorted pool instead
+    const list = deferredSearch.trim() ? matched : [...pool].sort((a, b) => a.name.localeCompare(b.name))
+    return list.map((b) => {
+      const store = getRetailStock(b.id, b.inStock)
+      const main = primaryWarehouse ? getWarehouseStock(b.id, primaryWarehouse.id) : 0
+      const back = bufferWarehouse ? getWarehouseStock(b.id, bufferWarehouse.id) : 0
+      return { book: b, store, main, back, total: store + main + back }
+    })
   }, [books, deferredSearch, catFilter, getRetailStock, getWarehouseStock, primaryWarehouse, bufferWarehouse])
 
   const cards = useMemo(() => {

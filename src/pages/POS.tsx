@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
-import { Search, Plus, Minus, Trash2, ShoppingCart } from 'lucide-react'
+import { Search, Plus, Minus, Trash2, ShoppingCart, User, ChevronDown, ChevronUp } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { useBooks } from '@/contexts/BooksContext'
@@ -8,12 +8,13 @@ import { useWarehouse } from '@/contexts/WarehouseContext'
 import { formatCurrency, cn } from '@/lib/utils'
 import { newRequestId, opsErrorMessage } from '@/lib/opsErrors'
 import { categoryLabel } from '@/lib/bookCategories'
+import { fuzzyFilterBooks } from '@/lib/fuzzySearch'
 import type { Book, CartItem, PaymentMethod } from '@/types'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Badge } from '@/components/ui/Badge'
 
-/** Bar-style POS · search · cart · pay. */
+/** Bar-style POS · search · optional customer · cart · pay. */
 export default function POS() {
   const { appUser } = useAuth()
   const { books } = useBooks()
@@ -23,6 +24,9 @@ export default function POS() {
   const [pay, setPay] = useState<PaymentMethod>('cash')
   const [busy, setBusy] = useState(false)
   const [lastLine, setLastLine] = useState('')
+  const [customerOpen, setCustomerOpen] = useState(false)
+  const [customerName, setCustomerName] = useState('')
+  const [customerPhone, setCustomerPhone] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
 
   const onShelf = useMemo(() => {
@@ -33,15 +37,10 @@ export default function POS() {
   }, [books, getRetailStock])
 
   const matches = useMemo(() => {
-    const s = q.trim().toLowerCase()
-    if (!s) return onShelf.slice(0, 20)
-    return onShelf
-      .filter(({ book: b }) =>
-        b.name.toLowerCase().includes(s) ||
-        (b.author ?? '').toLowerCase().includes(s) ||
-        (b.isbn ?? '').includes(s),
-      )
-      .slice(0, 20)
+    const shelfBooks = onShelf.map((r) => r.book)
+    const found = fuzzyFilterBooks(shelfBooks, q, { minScore: 0.4, limit: 24 })
+    const stockById = new Map(onShelf.map((r) => [r.book.id, r.stock]))
+    return found.map((book) => ({ book, stock: stockById.get(book.id) ?? 0 }))
   }, [onShelf, q])
 
   const add = (book: Book) => {
@@ -94,6 +93,18 @@ export default function POS() {
 
   const checkout = async () => {
     if (!appUser || cart.length === 0) return
+
+    const name = customerName.trim()
+    const phone = customerPhone.replace(/\D/g, '')
+    if (phone && phone.length < 7) {
+      toast.error('Phone looks too short')
+      return
+    }
+    if (phone && !name) {
+      toast.error('Add a name with the phone, or clear phone')
+      return
+    }
+
     setBusy(true)
     try {
       const items = cart.map((c) => ({
@@ -114,8 +125,8 @@ export default function POS() {
         grandTotal: total,
       }
       const { data, error } = await supabase.rpc('complete_sale', {
-        p_customer_name: 'Walk-in',
-        p_customer_phone: '',
+        p_customer_name: name || 'Walk-in',
+        p_customer_phone: phone,
         p_items: items,
         p_totals: totals,
         p_payment_method: pay,
@@ -127,9 +138,13 @@ export default function POS() {
       } as never)
       if (error) throw error
       const pcs = cart.reduce((s, c) => s + c.quantity, 0)
-      setLastLine(`Sold ${pcs} pcs · ${formatCurrency(total)} · ${pay}`)
+      const who = name ? ` · ${name}${phone ? ` (${phone})` : ''}` : ''
+      setLastLine(`Sold ${pcs} pcs · ${formatCurrency(total)} · ${pay}${who}`)
       toast.success('Sale done')
       setCart([])
+      setCustomerName('')
+      setCustomerPhone('')
+      setCustomerOpen(false)
       void data
       searchRef.current?.focus()
     } catch (e) {
@@ -142,6 +157,10 @@ export default function POS() {
   useEffect(() => {
     searchRef.current?.focus()
   }, [])
+
+  const customerHint = customerName.trim() || customerPhone.trim()
+    ? [customerName.trim(), customerPhone.trim()].filter(Boolean).join(' · ')
+    : 'Optional'
 
   return (
     <div className="mx-auto max-w-lg space-y-4 pb-8">
@@ -172,7 +191,7 @@ export default function POS() {
         <Input
           ref={searchRef}
           className="pl-11 min-h-12 text-base"
-          placeholder="Search shelf books…"
+          placeholder="Search title, author, ISBN… (EN / नेपाली)"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
@@ -189,7 +208,12 @@ export default function POS() {
               >
                 <div className="min-w-0 flex-1">
                   <p className="font-semibold text-gray-900 line-clamp-1">{b.name}</p>
-                  <Badge variant="gray" className="mt-0.5">{categoryLabel(b.language)}</Badge>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                    <Badge variant="gray">{categoryLabel(b.language)}</Badge>
+                    {b.author && (
+                      <span className="text-xs text-gray-400 line-clamp-1">{b.author}</span>
+                    )}
+                  </div>
                 </div>
                 <span className="text-sm tabular-nums text-gray-500">{stock}</span>
                 <span className="font-semibold tabular-nums">{formatCurrency(b.mrp)}</span>
@@ -198,6 +222,47 @@ export default function POS() {
           ))}
         </ul>
       )}
+
+      {q.trim() && matches.length === 0 && onShelf.length > 0 && (
+        <p className="text-sm text-gray-400 text-center py-2">No shelf match for “{q.trim()}”</p>
+      )}
+
+      <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 px-4 py-3 text-left hover:bg-gray-50"
+          onClick={() => setCustomerOpen((o) => !o)}
+        >
+          <User className="h-4 w-4 text-accent-600 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-gray-900">Customer</p>
+            <p className="text-xs text-gray-400 truncate">{customerHint}</p>
+          </div>
+          {customerOpen ? <ChevronUp className="h-4 w-4 text-gray-400" /> : <ChevronDown className="h-4 w-4 text-gray-400" />}
+        </button>
+        {customerOpen && (
+          <div className="px-4 pb-4 space-y-3 border-t border-gray-100 pt-3">
+            <Input
+              label="Name"
+              className="min-h-11"
+              placeholder="Walk-in if empty"
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
+              autoComplete="name"
+            />
+            <Input
+              label="Phone"
+              className="min-h-11"
+              placeholder="Optional · 98XXXXXXXX"
+              inputMode="tel"
+              value={customerPhone}
+              onChange={(e) => setCustomerPhone(e.target.value)}
+              autoComplete="tel"
+            />
+            <p className="text-[11px] text-gray-400">Skip both for a normal walk-in sale.</p>
+          </div>
+        )}
+      </div>
 
       <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
         <div className="px-4 py-2.5 border-b border-gray-100 text-xs font-semibold uppercase tracking-wide text-gray-400">
