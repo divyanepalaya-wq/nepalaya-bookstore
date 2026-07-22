@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
-  FileUp, ArrowRightLeft, Store, ShoppingCart, HelpCircle,
+  ArrowRightLeft, Store, ShoppingCart, HelpCircle,
   ScanBarcode, Printer, Warehouse, Boxes, ChevronRight, Keyboard, Package,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
