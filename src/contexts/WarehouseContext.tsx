@@ -34,6 +34,7 @@ interface WarehouseContextValue {
   inventoryLoading: boolean
   getRetailStock: (bookId: string, fallbackInStock?: number) => number
   getWarehouseStock: (bookId: string, warehouseId: string) => number
+  refreshInventory: (opts?: { silent?: boolean }) => Promise<void>
   seedReady: boolean
 }
 
@@ -120,6 +121,7 @@ export function WarehouseProvider({ children }: { children: ReactNode }) {
 
     async function load() {
       const gen = ++invGen.current
+      setInventoryLoading(true)
       try {
         const rows = await fetchAllPages<Record<string, unknown>>(async (from, to) => {
           const res = await supabase
@@ -157,8 +159,31 @@ export function WarehouseProvider({ children }: { children: ReactNode }) {
             payload.new &&
             typeof payload.new === 'object'
           ) {
-            const inv = mapInventory(payload.new as Record<string, unknown>)
-            setInventoryMap((prev) => ({ ...prev, [inv.bookId]: inv }))
+            const raw = payload.new as Record<string, unknown>
+            // Partial realtime payloads must not wipe stock — merge into existing row
+            if (!raw.book_id) {
+              scheduleReload()
+              return
+            }
+            setInventoryMap((prev) => {
+              const prevInv = prev[raw.book_id as string]
+              const hasBy = raw.by_warehouse != null
+              const hasRetail = raw.retail_qty != null
+              if (!hasBy && !hasRetail && prevInv) {
+                return prev
+              }
+              const mapped = mapInventory(raw)
+              const merged: BookInventory = {
+                bookId: mapped.bookId,
+                byWarehouse: hasBy ? mapped.byWarehouse : (prevInv?.byWarehouse ?? {}),
+                totalWarehouseQty: raw.total_warehouse_qty != null
+                  ? mapped.totalWarehouseQty
+                  : (prevInv?.totalWarehouseQty ?? mapped.totalWarehouseQty),
+                retailQty: hasRetail ? mapped.retailQty : (prevInv?.retailQty ?? mapped.retailQty),
+                updatedAt: mapped.updatedAt ?? prevInv?.updatedAt ?? mapped.updatedAt,
+              }
+              return { ...prev, [merged.bookId]: merged }
+            })
             return
           }
           if (payload.eventType === 'DELETE' && payload.old && typeof payload.old === 'object') {
@@ -211,7 +236,19 @@ export function WarehouseProvider({ children }: { children: ReactNode }) {
   const getRetailStock = useCallback(
     (bookId: string, fallbackInStock?: number) => {
       const inv = inventoryMap[bookId]
-      if (inv) return inv.byWarehouse?.[bookstoreId] ?? inv.retailQty ?? 0
+      if (!inv) return fallbackInStock ?? 0
+      const by = inv.byWarehouse ?? {}
+      // Prefer live bookstore id; also accept default id + retail_qty (avoids empty Sell during WH load)
+      const candidates = [
+        by[bookstoreId],
+        by[WH_IDS.bookstore],
+        inv.retailQty,
+      ]
+      for (const n of candidates) {
+        if (typeof n === 'number' && Number.isFinite(n) && n > 0) return n
+      }
+      if (typeof by[bookstoreId] === 'number') return by[bookstoreId]
+      if (typeof inv.retailQty === 'number') return inv.retailQty
       return fallbackInStock ?? 0
     },
     [inventoryMap, bookstoreId],
@@ -224,6 +261,34 @@ export function WarehouseProvider({ children }: { children: ReactNode }) {
     },
     [inventoryMap],
   )
+
+  const refreshInventory = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!appUser) return
+    const gen = ++invGen.current
+    const silent = opts?.silent === true
+    if (!silent) setInventoryLoading(true)
+    try {
+      const rows = await fetchAllPages<Record<string, unknown>>(async (from, to) => {
+        const res = await supabase
+          .from('book_inventory')
+          .select(INV_COLS)
+          .order('book_id')
+          .range(from, to)
+        return { data: res.data as Record<string, unknown>[] | null, error: res.error }
+      })
+      if (gen !== invGen.current) return
+      const map: Record<string, BookInventory> = {}
+      for (const r of rows) {
+        const inv = mapInventory(r)
+        map[inv.bookId] = inv
+      }
+      setInventoryMap(map)
+    } catch (e) {
+      if (gen === invGen.current) console.warn('inventory refresh failed', e)
+    } finally {
+      if (gen === invGen.current) setInventoryLoading(false)
+    }
+  }, [appUser])
 
   const value = useMemo<WarehouseContextValue>(
     () => ({
@@ -240,6 +305,7 @@ export function WarehouseProvider({ children }: { children: ReactNode }) {
       inventoryLoading,
       getRetailStock,
       getWarehouseStock,
+      refreshInventory,
       seedReady,
     }),
     [
@@ -256,6 +322,7 @@ export function WarehouseProvider({ children }: { children: ReactNode }) {
       inventoryLoading,
       getRetailStock,
       getWarehouseStock,
+      refreshInventory,
       seedReady,
     ],
   )

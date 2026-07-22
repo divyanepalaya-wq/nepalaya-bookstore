@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
-import { Search, Plus, Minus, Trash2, ShoppingCart, User, ChevronDown, ChevronUp } from 'lucide-react'
+import { Search, Plus, Minus, Trash2, ShoppingCart, User, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { useBooks } from '@/contexts/BooksContext'
@@ -13,28 +13,36 @@ import type { Book, CartItem, PaymentMethod } from '@/types'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Badge } from '@/components/ui/Badge'
+import { PageSpinner } from '@/components/ui/Spinner'
 
 /** Bar-style POS · search · optional customer · cart · pay. */
 export default function POS() {
   const { appUser } = useAuth()
-  const { books } = useBooks()
-  const { bookstoreId, getRetailStock } = useWarehouse()
+  const { books, loading: booksLoading } = useBooks()
+  const {
+    bookstoreId, getRetailStock, inventoryLoading, loading: warehousesLoading,
+    refreshInventory,
+  } = useWarehouse()
   const [q, setQ] = useState('')
   const [cart, setCart] = useState<CartItem[]>([])
   const [pay, setPay] = useState<PaymentMethod>('cash')
   const [busy, setBusy] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
   const [lastLine, setLastLine] = useState('')
   const [customerOpen, setCustomerOpen] = useState(false)
   const [customerName, setCustomerName] = useState('')
   const [customerPhone, setCustomerPhone] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
 
+  const ready = !booksLoading && !inventoryLoading && !warehousesLoading
+
   const onShelf = useMemo(() => {
+    if (!ready) return []
     return books
       .map((b) => ({ book: b, stock: getRetailStock(b.id, b.inStock) }))
       .filter((r) => r.stock > 0)
       .sort((a, b) => a.book.name.localeCompare(b.book.name))
-  }, [books, getRetailStock])
+  }, [books, getRetailStock, ready])
 
   const matches = useMemo(() => {
     const shelfBooks = onShelf.map((r) => r.book)
@@ -42,6 +50,31 @@ export default function POS() {
     const stockById = new Map(onShelf.map((r) => [r.book.id, r.stock]))
     return found.map((book) => ({ book, stock: stockById.get(book.id) ?? 0 }))
   }, [onShelf, q])
+
+  const reloadShelf = async () => {
+    setRefreshing(true)
+    try {
+      await refreshInventory()
+      toast.success('Shelf updated')
+    } catch {
+      toast.error('Could not refresh shelf')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  // Soft refresh when opening Sell / returning to the tab (keeps current shelf visible)
+  useEffect(() => {
+    void refreshInventory({ silent: true })
+  }, [refreshInventory])
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === 'visible') void refreshInventory({ silent: true })
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [refreshInventory])
 
   const add = (book: Book) => {
     const stock = getRetailStock(book.id, book.inStock)
@@ -146,6 +179,7 @@ export default function POS() {
       setCustomerPhone('')
       setCustomerOpen(false)
       void data
+      void refreshInventory({ silent: true })
       searchRef.current?.focus()
     } catch (e) {
       toast.error(opsErrorMessage(e, 'Sale failed'))
@@ -155,8 +189,10 @@ export default function POS() {
   }
 
   useEffect(() => {
-    searchRef.current?.focus()
-  }, [])
+    if (ready) searchRef.current?.focus()
+  }, [ready])
+
+  if (!ready) return <PageSpinner />
 
   const customerHint = customerName.trim() || customerPhone.trim()
     ? [customerName.trim(), customerPhone.trim()].filter(Boolean).join(' · ')
@@ -164,14 +200,27 @@ export default function POS() {
 
   return (
     <div className="mx-auto max-w-lg space-y-4 pb-8">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-          <ShoppingCart className="h-7 w-7 text-accent-600" />
-          Sell
-        </h1>
-        <p className="text-sm text-gray-500 mt-0.5">
-          From shelf · {onShelf.length} titles in stock
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+            <ShoppingCart className="h-7 w-7 text-accent-600" />
+            Sell
+          </h1>
+          <p className="text-sm text-gray-500 mt-0.5">
+            From shelf · {onShelf.length} titles in stock
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="min-h-10 shrink-0"
+          loading={refreshing}
+          onClick={() => void reloadShelf()}
+          title="Refresh shelf stock"
+        >
+          <RefreshCw className="h-4 w-4" />
+        </Button>
       </div>
 
       {lastLine && (
@@ -181,8 +230,13 @@ export default function POS() {
       )}
 
       {onShelf.length === 0 && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          Nothing on the shelf yet. Use <strong>Send → Store shelf</strong> or <strong>Stock in → Nepali / English</strong> first.
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 space-y-2">
+          <p>
+            Nothing on the shelf yet. Use <strong>Send → Store shelf</strong> or <strong>Stock in → Nepali / English</strong> first.
+          </p>
+          <Button type="button" size="sm" variant="outline" loading={refreshing} onClick={() => void reloadShelf()}>
+            <RefreshCw className="h-3.5 w-3.5" /> Refresh shelf
+          </Button>
         </div>
       )}
 
