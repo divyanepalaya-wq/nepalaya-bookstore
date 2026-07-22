@@ -1,7 +1,7 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Search, Boxes, PackagePlus, Download, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Search, Boxes, PackagePlus, Download, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { mapBox } from '@/lib/mappers'
 import { fetchAllPages } from '@/lib/fetchAll'
@@ -9,7 +9,8 @@ import { useBooks } from '@/contexts/BooksContext'
 import { useWarehouse } from '@/contexts/WarehouseContext'
 import { isNepalaya } from '@/lib/bookCategories'
 import { downloadCSV } from '@/lib/csvUtils'
-import { cn } from '@/lib/utils'
+import { cn, toMillis } from '@/lib/utils'
+import { cartonNumber } from '@/components/BookCartonSheet'
 import type { Box, Book } from '@/types'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
@@ -38,6 +39,7 @@ export default function CartonSheet() {
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search)
   const [page, setPage] = useState(1)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const PAGE_SIZE = 30
 
@@ -54,7 +56,7 @@ export default function CartonSheet() {
         const rows = await fetchAllPages<Record<string, unknown>>(async (from, to) => {
           const res = await supabase
             .from('boxes')
-            .select('id,barcode,book_id,book_name,warehouse_id,quantity,initial_quantity,status,is_deleted,created_at')
+            .select('id,barcode,book_id,book_name,warehouse_id,quantity,initial_quantity,status,is_deleted,created_at,batch_ref')
             .neq('status', 'empty')
             .order('created_at', { ascending: true })
             .range(from, to)
@@ -79,23 +81,32 @@ export default function CartonSheet() {
     return () => { cancelled = true }
   }, [])
 
-  const rows = useMemo(() => {
+  const boxesByBook = useMemo(() => {
     const byBook = new Map<string, (Box & { id: string })[]>()
     for (const b of boxes) {
-      // Prefer warehouse + backroom; still count others so nothing is silently dropped
       const list = byBook.get(b.bookId) ?? []
       list.push(b)
       byBook.set(b.bookId, list)
     }
+    for (const [, list] of byBook) {
+      list.sort((a, b) => {
+        const na = cartonNumber(a, 0)
+        const nb = cartonNumber(b, 0)
+        if (na && nb && na !== nb) return na - nb
+        return toMillis(a.createdAt) - toMillis(b.createdAt)
+      })
+    }
+    return byBook
+  }, [boxes])
 
+  const rows = useMemo(() => {
+    const byBook = boxesByBook
     const out: Row[] = []
     const seen = new Set<string>()
 
     for (const [bookId, bookBoxes] of byBook) {
       seen.add(bookId)
       const book = bookById.get(bookId) ?? null
-      // Skip pure third-party shelf books with no warehouse cartons in primary/buffer
-      // but always show if they have any carton rows
       const cartonCount = bookBoxes.length
       const pieceFromCartons = bookBoxes.reduce((s, b) => s + b.quantity, 0)
       const whPcs = getWarehouseStock(bookId, primaryId)
@@ -142,7 +153,7 @@ export default function CartonSheet() {
       .filter((r) => r.total > 0 || r.boxes > 0)
       .filter((r) => !q || r.name.toLowerCase().includes(q) || r.author.toLowerCase().includes(q))
       .sort((a, b) => a.name.localeCompare(b.name))
-  }, [boxes, books, bookById, deferredSearch, getWarehouseStock, primaryId, bufferId])
+  }, [boxesByBook, books, bookById, deferredSearch, getWarehouseStock, primaryId, bufferId])
 
   const totals = useMemo(() => {
     let boxesN = 0
@@ -167,18 +178,29 @@ export default function CartonSheet() {
   }, [deferredSearch])
 
   const exportExcel = () => {
+    const detailRows: (string | number)[][] = []
+    for (const r of rows) {
+      const list = boxesByBook.get(r.bookId) ?? []
+      if (list.length === 0) {
+        detailRows.push([r.name, r.author, '', '', r.whPcs, r.brPcs, r.total])
+        continue
+      }
+      list.forEach((b, i) => {
+        detailRows.push([
+          r.name,
+          r.author,
+          cartonNumber(b, i + 1),
+          b.barcode,
+          b.quantity,
+          r.whPcs,
+          r.brPcs,
+        ])
+      })
+    }
     downloadCSV(
       `nepalaya-cartons-${new Date().toISOString().slice(0, 10)}.csv`,
-      ['Book', 'Author', 'Cartons', 'Pcs per carton', 'Warehouse pcs', 'Backroom pcs', 'Total pcs'],
-      rows.map((r) => [
-        r.name,
-        r.author,
-        r.boxes,
-        r.pcsPerBox ?? '',
-        r.whPcs,
-        r.brPcs,
-        r.total,
-      ]),
+      ['Book', 'Author', 'Carton #', 'Carton ID', 'Books in carton', 'Warehouse pcs', 'Backroom pcs'],
+      detailRows,
     )
   }
 
@@ -190,7 +212,7 @@ export default function CartonSheet() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Cartons</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            All warehouse cartons · {totals.titles} titles · {totals.boxesN.toLocaleString()} cartons
+            Excel-style · tap a book for carton #1, #2… · {totals.titles} titles
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -244,40 +266,80 @@ export default function CartonSheet() {
               No carton stock yet. Tap Stock in.
             </li>
           )}
-          {pageRows.map((r) => (
-            <li key={r.bookId}>
-              <button
-                type="button"
-                onClick={() => navigate(`/books/${r.bookId}`)}
-                className="grid w-full grid-cols-[1fr_4.5rem_4.5rem_5rem] gap-1 px-3 py-3.5 text-left hover:bg-accent-50/40 active:bg-accent-50"
-              >
-                <div className="min-w-0 flex items-center gap-2">
-                  {r.coverUrl ? (
-                    <img src={r.coverUrl} alt="" className="h-10 w-7 rounded object-cover shrink-0 bg-gray-100" />
-                  ) : (
-                    <div className="h-10 w-7 rounded bg-gray-100 shrink-0 flex items-center justify-center">
-                      <Boxes className="h-3.5 w-3.5 text-gray-300" />
+          {pageRows.map((r) => {
+            const open = expandedId === r.bookId
+            const cartonList = boxesByBook.get(r.bookId) ?? []
+            return (
+              <li key={r.bookId}>
+                <button
+                  type="button"
+                  onClick={() => setExpandedId(open ? null : r.bookId)}
+                  className="grid w-full grid-cols-[1fr_4.5rem_4.5rem_5rem] gap-1 px-3 py-3.5 text-left hover:bg-accent-50/40 active:bg-accent-50"
+                >
+                  <div className="min-w-0 flex items-center gap-2">
+                    <ChevronDown className={cn('h-4 w-4 text-gray-400 shrink-0 transition-transform', open && 'rotate-180')} />
+                    {r.coverUrl ? (
+                      <img src={r.coverUrl} alt="" className="h-10 w-7 rounded object-cover shrink-0 bg-gray-100" />
+                    ) : (
+                      <div className="h-10 w-7 rounded bg-gray-100 shrink-0 flex items-center justify-center">
+                        <Boxes className="h-3.5 w-3.5 text-gray-300" />
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="font-semibold text-gray-900 text-[15px] leading-snug line-clamp-2">{r.name}</p>
+                      <p className="text-[11px] text-gray-400 mt-0.5">
+                        WH {r.whPcs} · Back {r.brPcs}
+                      </p>
                     </div>
-                  )}
-                  <div className="min-w-0">
-                    <p className="font-semibold text-gray-900 text-[15px] leading-snug line-clamp-2">{r.name}</p>
-                    <p className="text-[11px] text-gray-400 mt-0.5">
-                      WH {r.whPcs} · Back {r.brPcs}
-                    </p>
                   </div>
-                </div>
-                <span className={cn('self-center text-right text-lg font-bold tabular-nums', r.boxes ? 'text-gray-900' : 'text-gray-300')}>
-                  {r.boxes || '—'}
-                </span>
-                <span className={cn('self-center text-right text-lg font-bold tabular-nums', r.pcsPerBox ? 'text-gray-900' : 'text-gray-300')}>
-                  {r.pcsPerBox ?? '—'}
-                </span>
-                <span className="self-center text-right text-lg font-bold tabular-nums text-accent-800">
-                  {r.total.toLocaleString()}
-                </span>
-              </button>
-            </li>
-          ))}
+                  <span className={cn('self-center text-right text-lg font-bold tabular-nums', r.boxes ? 'text-gray-900' : 'text-gray-300')}>
+                    {r.boxes || '—'}
+                  </span>
+                  <span className={cn('self-center text-right text-lg font-bold tabular-nums', r.pcsPerBox ? 'text-gray-900' : 'text-gray-300')}>
+                    {r.pcsPerBox ?? '—'}
+                  </span>
+                  <span className="self-center text-right text-lg font-bold tabular-nums text-accent-800">
+                    {r.total.toLocaleString()}
+                  </span>
+                </button>
+                {open && (
+                  <div className="bg-gray-50 border-t border-gray-100 px-3 py-3 space-y-2">
+                    {cartonList.length === 0 ? (
+                      <p className="text-sm text-gray-400 px-1">No cartons numbered yet</p>
+                    ) : (
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-[10px] uppercase tracking-wide text-gray-400">
+                            <th className="text-left font-semibold py-1 w-12">#</th>
+                            <th className="text-left font-semibold py-1">Carton ID</th>
+                            <th className="text-right font-semibold py-1 w-20">Books</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200/80">
+                          {cartonList.map((b, i) => (
+                            <tr key={b.id}>
+                              <td className="py-1.5 font-bold tabular-nums text-accent-800">{cartonNumber(b, i + 1)}</td>
+                              <td className="py-1.5 font-mono text-xs text-gray-600 break-all">{b.barcode}</td>
+                              <td className="py-1.5 text-right font-semibold tabular-nums">{b.quantity}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="w-full min-h-10"
+                      onClick={() => navigate(`/books/${r.bookId}`)}
+                    >
+                      Open Excel sheet · add / edit cartons
+                    </Button>
+                  </div>
+                )}
+              </li>
+            )
+          })}
         </ul>
       </div>
 

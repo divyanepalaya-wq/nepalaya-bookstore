@@ -1,20 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Pencil, Sparkles, Trash2, Minus } from 'lucide-react'
+import { ArrowLeft, Pencil, Sparkles, Minus } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { mapBox, mapMovement } from '@/lib/mappers'
 import { useBooks } from '@/contexts/BooksContext'
 import { useWarehouse } from '@/contexts/WarehouseContext'
 import { useAuth } from '@/contexts/AuthContext'
-import { canWarehouse, cartonStatusLabel } from '@/lib/roles'
+import { canWarehouse } from '@/lib/roles'
 import { CATEGORY_OPTIONS, categoryLabel } from '@/lib/bookCategories'
 import { movementLine } from '@/lib/activityCopy'
-import { voidCarton, removeShelfStock } from '@/lib/inventoryService'
+import { removeShelfStock } from '@/lib/inventoryService'
 import { opsErrorMessage } from '@/lib/opsErrors'
 import { formatCurrency, formatDateTime, toMillis } from '@/lib/utils'
 import type { Box, InventoryMovement, BookType } from '@/types'
 import { BookEnrichModal } from '@/components/BookEnrichModal'
+import { BookCartonSheet } from '@/components/BookCartonSheet'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Select } from '@/components/ui/Select'
@@ -47,7 +48,7 @@ export default function BookDetail() {
     let cancelled = false
     async function load() {
       const [bRes, mRes] = await Promise.all([
-        supabase.from('boxes').select('*').eq('book_id', bookId).limit(100),
+        supabase.from('boxes').select('*').eq('book_id', bookId).limit(500),
         supabase.from('inventory_movements').select('*').eq('book_id', bookId).order('created_at', { ascending: false }).limit(20),
       ])
       if (cancelled) return
@@ -86,21 +87,6 @@ export default function BookDetail() {
       toast.error(e instanceof Error ? e.message : 'Failed')
     } finally {
       setSavingCat(false)
-    }
-  }
-
-  const handleVoidCarton = async (box: Box & { id: string }) => {
-    if (!appUser) return
-    if (!confirm(`Remove carton ${box.barcode} (${box.quantity} pcs)? This undoes a mistaken receive.`)) return
-    setBusy(true)
-    try {
-      await voidCarton({ boxId: box.id, bookstoreId, user: appUser })
-      toast.success(`Removed carton · −${box.quantity} pcs`)
-      setReloadKey((k) => k + 1)
-    } catch (e) {
-      toast.error(opsErrorMessage(e, 'Could not remove carton'))
-    } finally {
-      setBusy(false)
     }
   }
 
@@ -226,33 +212,12 @@ export default function BookDetail() {
         </div>
       )}
 
-      <section className="rounded-2xl border border-gray-200 bg-white p-4 space-y-3">
-        <h2 className="text-sm font-semibold text-gray-900">Cartons · {boxes.length}</h2>
-        {boxes.length === 0 ? (
-          <p className="text-sm text-gray-400">No cartons</p>
-        ) : (
-          <ul className="space-y-2 max-h-56 overflow-y-auto">
-            {boxes.slice(0, 30).map((b) => (
-              <li key={b.id} className="flex items-center gap-2 text-sm">
-                <span className="font-mono text-xs text-gray-500 truncate flex-1">{b.barcode}</span>
-                <span className="tabular-nums font-semibold">{b.quantity}</span>
-                <Badge variant="gray">{cartonStatusLabel(b.status)}</Badge>
-                {wh && (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    title="Remove carton (undo receive)"
-                    className="rounded-lg p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-40"
-                    onClick={() => void handleVoidCarton(b)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <BookCartonSheet
+        book={book}
+        boxes={boxes}
+        canEdit={wh}
+        onChanged={() => setReloadKey((k) => k + 1)}
+      />
 
       <section className="rounded-2xl border border-gray-200 bg-white p-4 space-y-3">
         <h2 className="text-sm font-semibold text-gray-900">Log</h2>
