@@ -24,7 +24,7 @@ export async function createStaffUser(params: {
   email: string
   password: string
   displayName: string
-  role: 'superadmin' | 'admin' | 'cashier'
+  role: 'superadmin' | 'admin' | 'warehouse' | 'cashier' | 'receptionist'
 }): Promise<string> {
   const data = await invokeStaffAdmin({ action: 'create', ...params })
   if (!data.uid) throw new Error('User create returned no uid')
@@ -40,7 +40,7 @@ export async function resetStaffPassword(params: {
 
 export async function changeStaffRole(params: {
   userId: string
-  role: 'superadmin' | 'admin' | 'cashier'
+  role: 'superadmin' | 'admin' | 'warehouse' | 'cashier' | 'receptionist'
 }): Promise<void> {
   await invokeStaffAdmin({ action: 'changeRole', ...params })
 }

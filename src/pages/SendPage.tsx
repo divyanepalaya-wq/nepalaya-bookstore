@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
-import { Send, ScanBarcode, Package, Store } from 'lucide-react'
+import { Send, ScanBarcode, Package, Store, Keyboard } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useWarehouse } from '@/contexts/WarehouseContext'
 import {
@@ -21,8 +21,8 @@ import { cn } from '@/lib/utils'
 type Dest = 'backroom' | 'store'
 
 /**
- * Send = scan + move. Replaces separate Move and Scan.
- * Warehouse → backroom (whole carton) or → shelf (pieces).
+ * Send = scan + move.
+ * Supports camera scan + USB/wedge barcode scanners (auto-submit on Enter).
  */
 export default function SendPage() {
   const { appUser } = useAuth()
@@ -32,9 +32,12 @@ export default function SendPage() {
   const [dest, setDest] = useState<Dest>('backroom')
   const [qty, setQty] = useState('')
   const [busy, setBusy] = useState(false)
+  const [looking, setLooking] = useState(false)
   const [cameraOpen, setCameraOpen] = useState(false)
   const [lastLine, setLastLine] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
+  const scanBuf = useRef('')
+  const scanTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const primaryId = primaryWarehouse?.id ?? 'wh-primary'
   const bufferId = bufferWarehouse?.id ?? 'wh-buffer'
@@ -42,6 +45,8 @@ export default function SendPage() {
   const lookup = async (code: string) => {
     const trimmed = code.trim()
     if (!trimmed) return
+    setLooking(true)
+    setBarcode(trimmed)
     try {
       const found = await findBoxByBarcode(trimmed)
       if (!found || found.quantity <= 0) {
@@ -58,10 +63,51 @@ export default function SendPage() {
       setQty(String(found.quantity))
       if (found.warehouseId === primaryId) setDest('backroom')
       else setDest('store')
+      toast.success(`Found · ${found.bookName}`)
     } catch (e) {
       toast.error(opsErrorMessage(e, 'Lookup failed'))
+    } finally {
+      setLooking(false)
+      inputRef.current?.select()
     }
   }
+
+  // USB / Bluetooth wedge scanners type very fast then often send Enter.
+  // Also catch rapid key bursts when focus isn't on the input.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (cameraOpen || busy) return
+      const el = e.target as HTMLElement | null
+      const typingInField =
+        el &&
+        (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
+      if (typingInField && el !== inputRef.current) return
+
+      if (e.key === 'Enter') {
+        if (scanBuf.current.length >= 3) {
+          e.preventDefault()
+          const code = scanBuf.current
+          scanBuf.current = ''
+          void lookup(code)
+        }
+        return
+      }
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (!typingInField || el === inputRef.current) {
+          scanBuf.current += e.key
+          if (scanTimer.current) clearTimeout(scanTimer.current)
+          scanTimer.current = setTimeout(() => {
+            scanBuf.current = ''
+          }, 80)
+        }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      if (scanTimer.current) clearTimeout(scanTimer.current)
+    }
+  }, [cameraOpen, busy, primaryId])
 
   const handleSend = async () => {
     if (!appUser || !box) return
@@ -89,9 +135,8 @@ export default function SendPage() {
           notes: 'Send to backroom',
         })
         await receiveTransfer({ transferId, bookstoreId, user: appUser })
-        const line = `I took ${box.barcode} (${box.bookName}, ${box.quantity} pcs) → backroom`
-        setLastLine(line)
-        toast.success('→ Backroom · ब्याक रुममा')
+        setLastLine(`I took ${box.barcode} (${box.bookName}, ${box.quantity} pcs) → backroom`)
+        toast.success('→ Backroom')
       } else {
         const n = parseInt(qty, 10)
         if (!n || n <= 0 || n > box.quantity) {
@@ -106,9 +151,8 @@ export default function SendPage() {
           bookstoreId,
           user: appUser,
         })
-        const line = `I put ${n} pcs of ${box.bookName} on store shelf`
-        setLastLine(line)
-        toast.success('→ Shelf · सेल्फमा')
+        setLastLine(`I put ${n} pcs of ${box.bookName} on store shelf`)
+        toast.success('→ Shelf')
       }
       setBox(null)
       setBarcode('')
@@ -129,7 +173,7 @@ export default function SendPage() {
           Send
         </h1>
         <p className="text-sm text-gray-500 mt-0.5">
-          Scan carton · कहाँ लैजाने? · backroom or shelf
+          Scan carton → backroom or shelf
         </p>
       </div>
 
@@ -139,13 +183,24 @@ export default function SendPage() {
         </div>
       )}
 
+      <Button
+        type="button"
+        size="lg"
+        className="w-full min-h-16 text-lg"
+        onClick={() => setCameraOpen(true)}
+      >
+        <ScanBarcode className="h-6 w-6" /> Open camera scanner
+      </Button>
+
       <div className="rounded-2xl border border-gray-200 bg-white p-4 space-y-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 flex items-center gap-1.5">
+          <Keyboard className="h-3.5 w-3.5" /> Or type / USB scan
+        </p>
         <div className="flex gap-2">
           <Input
             ref={inputRef}
-            label="Carton barcode"
-            className="min-h-12 text-base"
-            placeholder="Scan NPBX-…"
+            className="min-h-14 text-lg font-mono tracking-wide"
+            placeholder="NPBX-…"
             value={barcode}
             onChange={(e) => setBarcode(e.target.value)}
             onKeyDown={(e) => {
@@ -155,15 +210,20 @@ export default function SendPage() {
               }
             }}
             autoFocus
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
           />
-          <div className="flex flex-col gap-2 pt-6">
-            <Button type="button" size="lg" variant="outline" className="min-h-12" onClick={() => void lookup(barcode)}>
-              Find
-            </Button>
-            <Button type="button" size="lg" variant="outline" className="min-h-12" onClick={() => setCameraOpen(true)}>
-              <ScanBarcode className="h-5 w-5" />
-            </Button>
-          </div>
+          <Button
+            type="button"
+            size="lg"
+            variant="outline"
+            className="min-h-14 px-5 shrink-0"
+            loading={looking}
+            onClick={() => void lookup(barcode)}
+          >
+            Find
+          </Button>
         </div>
 
         {box && (
@@ -183,8 +243,8 @@ export default function SendPage() {
           <p className="text-sm font-semibold text-gray-700">Send to</p>
           <div className="grid grid-cols-2 gap-3">
             {([
-              { id: 'backroom' as const, label: 'Backroom', sub: 'पूरा कार्टुन', icon: Package },
-              { id: 'store' as const, label: 'Store shelf', sub: 'केही प्रति', icon: Store },
+              { id: 'backroom' as const, label: 'Backroom', sub: 'Whole carton', icon: Package },
+              { id: 'store' as const, label: 'Store shelf', sub: 'Some pieces', icon: Store },
             ]).map((opt) => (
               <button
                 key={opt.id}
@@ -230,10 +290,12 @@ export default function SendPage() {
 
       {cameraOpen && (
         <CameraScan
-          onClose={() => setCameraOpen(false)}
+          onClose={() => {
+            setCameraOpen(false)
+            inputRef.current?.focus()
+          }}
           onScan={(code) => {
             setCameraOpen(false)
-            setBarcode(code)
             void lookup(code)
           }}
         />

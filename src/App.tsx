@@ -12,6 +12,7 @@ import { PageSpinner } from '@/components/ui/Spinner'
 import { isSupabaseConfigured } from '@/lib/supabase'
 import Login from '@/pages/Login'
 import HomeRedirect from '@/pages/HomeRedirect'
+import Overview from '@/pages/Overview'
 import ReceiveHub from '@/pages/ReceiveHub'
 import AddStock from '@/pages/AddStock'
 import VendorReceive from '@/pages/VendorReceive'
@@ -76,27 +77,28 @@ function App() {
                     }
                   >
                     <Route index element={<HomeRedirect />} />
+                    <Route path="overview" element={<Overview />} />
 
                     <Route path="receive" element={<ReceiveHub />} />
                     <Route path="receive/warehouse" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'warehouse']}>
                         <AddStock />
                       </ProtectedRoute>
                     } />
                     <Route path="receive/vendor" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'cashier']}>
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'warehouse', 'receptionist']}>
                         <VendorReceive />
                       </ProtectedRoute>
                     } />
 
                     <Route path="send" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'cashier']}>
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'warehouse']}>
                         <SendPage />
                       </ProtectedRoute>
                     } />
 
                     <Route path="sell" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'cashier']}>
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'warehouse', 'cashier', 'receptionist']}>
                         <Lazy><POS /></Lazy>
                       </ProtectedRoute>
                     } />
@@ -106,13 +108,13 @@ function App() {
                     <Route path="books/:id" element={<BookDetail />} />
 
                     <Route path="cartons" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'warehouse']}>
                         <CartonSheet />
                       </ProtectedRoute>
                     } />
 
                     <Route path="fix" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'warehouse']}>
                         <FixStock />
                       </ProtectedRoute>
                     } />
@@ -120,7 +122,7 @@ function App() {
                     <Route path="settings" element={<Settings />} />
                     <Route path="settings/account" element={<AccountSettings />} />
                     <Route path="settings/discounts" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'warehouse']}>
                         <Lazy><Discounts /></Lazy>
                       </ProtectedRoute>
                     } />
@@ -130,11 +132,10 @@ function App() {
                       </ProtectedRoute>
                     } />
                     <Route path="settings/warehouses" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'warehouse']}>
                         <Lazy><Warehouses /></Lazy>
                       </ProtectedRoute>
                     } />
-
                     {/* Old URLs → new */}
                     <Route path="move" element={<Navigate to="/send" replace />} />
                     <Route path="scan" element={<Navigate to="/send" replace />} />

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { Search, Plus, Minus, Trash2, ShoppingCart } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
@@ -23,25 +23,33 @@ export default function POS() {
   const [pay, setPay] = useState<PaymentMethod>('cash')
   const [busy, setBusy] = useState(false)
   const [lastLine, setLastLine] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
+
+  const onShelf = useMemo(() => {
+    return books
+      .map((b) => ({ book: b, stock: getRetailStock(b.id, b.inStock) }))
+      .filter((r) => r.stock > 0)
+      .sort((a, b) => a.book.name.localeCompare(b.book.name))
+  }, [books, getRetailStock])
 
   const matches = useMemo(() => {
     const s = q.trim().toLowerCase()
-    if (!s) return []
-    return books
-      .filter((b) => {
-        const stock = getRetailStock(b.id, b.inStock)
-        if (stock <= 0) return false
-        return (
-          b.name.toLowerCase().includes(s) ||
-          (b.author ?? '').toLowerCase().includes(s) ||
-          (b.isbn ?? '').includes(s)
-        )
-      })
-      .slice(0, 12)
-  }, [books, q, getRetailStock])
+    if (!s) return onShelf.slice(0, 20)
+    return onShelf
+      .filter(({ book: b }) =>
+        b.name.toLowerCase().includes(s) ||
+        (b.author ?? '').toLowerCase().includes(s) ||
+        (b.isbn ?? '').includes(s),
+      )
+      .slice(0, 20)
+  }, [onShelf, q])
 
   const add = (book: Book) => {
     const stock = getRetailStock(book.id, book.inStock)
+    if (stock <= 0) {
+      toast.error('Not on shelf')
+      return
+    }
     setCart((prev) => {
       const i = prev.findIndex((c) => c.bookId === book.id)
       if (i >= 0) {
@@ -66,6 +74,7 @@ export default function POS() {
       ]
     })
     setQ('')
+    searchRef.current?.focus()
   }
 
   const setQty = (bookId: string, quantity: number) => {
@@ -96,29 +105,43 @@ export default function POS() {
         discountAmount: 0,
         subtotal: c.unitPrice * c.quantity,
       }))
+      const totals = {
+        subtotalBeforeDiscount: total,
+        totalItemDiscounts: 0,
+        orderDiscountPercent: 0,
+        orderDiscountAmount: 0,
+        totalDiscountAmount: 0,
+        grandTotal: total,
+      }
       const { data, error } = await supabase.rpc('complete_sale', {
-        p_items: items,
-        p_bookstore_id: bookstoreId,
         p_customer_name: 'Walk-in',
         p_customer_phone: '',
+        p_items: items,
+        p_totals: totals,
         p_payment_method: pay,
         p_amount_paid: total,
-        p_order_discount_percent: 0,
+        p_change_given: 0,
         p_notes: '',
+        p_bookstore_id: bookstoreId,
         p_client_request_id: newRequestId(),
       } as never)
       if (error) throw error
-      const saleId = typeof data === 'string' ? data : (data as { id?: string })?.id ?? ''
-      setLastLine(`Sold ${cart.reduce((s, c) => s + c.quantity, 0)} pcs · ${formatCurrency(total)} · ${pay}`)
+      const pcs = cart.reduce((s, c) => s + c.quantity, 0)
+      setLastLine(`Sold ${pcs} pcs · ${formatCurrency(total)} · ${pay}`)
       toast.success('Sale done')
       setCart([])
-      void saleId
+      void data
+      searchRef.current?.focus()
     } catch (e) {
       toast.error(opsErrorMessage(e, 'Sale failed'))
     } finally {
       setBusy(false)
     }
   }
+
+  useEffect(() => {
+    searchRef.current?.focus()
+  }, [])
 
   return (
     <div className="mx-auto max-w-lg space-y-4 pb-8">
@@ -128,7 +151,7 @@ export default function POS() {
           Sell
         </h1>
         <p className="text-sm text-gray-500 mt-0.5">
-          Shelf only · बेच्ने · walk-in
+          From shelf · {onShelf.length} titles in stock
         </p>
       </div>
 
@@ -138,20 +161,26 @@ export default function POS() {
         </div>
       )}
 
+      {onShelf.length === 0 && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Nothing on the shelf yet. Use <strong>Send → Store shelf</strong> or <strong>Stock in → Nepali / English</strong> first.
+        </div>
+      )}
+
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
         <Input
+          ref={searchRef}
           className="pl-11 min-h-12 text-base"
-          placeholder="Search book on shelf…"
+          placeholder="Search shelf books…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          autoFocus
         />
       </div>
 
       {matches.length > 0 && (
-        <ul className="rounded-2xl border border-gray-200 bg-white divide-y divide-gray-100 max-h-48 overflow-y-auto">
-          {matches.map((b) => (
+        <ul className="rounded-2xl border border-gray-200 bg-white divide-y divide-gray-100 max-h-56 overflow-y-auto">
+          {matches.map(({ book: b, stock }) => (
             <li key={b.id}>
               <button
                 type="button"
@@ -162,7 +191,7 @@ export default function POS() {
                   <p className="font-semibold text-gray-900 line-clamp-1">{b.name}</p>
                   <Badge variant="gray" className="mt-0.5">{categoryLabel(b.language)}</Badge>
                 </div>
-                <span className="text-sm tabular-nums text-gray-500">{getRetailStock(b.id, b.inStock)}</span>
+                <span className="text-sm tabular-nums text-gray-500">{stock}</span>
                 <span className="font-semibold tabular-nums">{formatCurrency(b.mrp)}</span>
               </button>
             </li>
@@ -224,7 +253,7 @@ export default function POS() {
             ))}
           </div>
           <Button size="lg" className="w-full min-h-14 text-lg" loading={busy} disabled={busy} onClick={() => void checkout()}>
-            Take payment
+            Take payment · {formatCurrency(total)}
           </Button>
         </div>
       )}

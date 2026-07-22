@@ -9,7 +9,7 @@ const links = [
     label: 'Undo stock',
     desc: 'Reverse mistaken receive or put on sale',
     icon: RotateCcw,
-    show: (role?: string) => role === 'admin' || role === 'superadmin',
+    show: (role?: string) => role === 'admin' || role === 'warehouse' || role === 'superadmin',
   },
   {
     to: '/settings/account',

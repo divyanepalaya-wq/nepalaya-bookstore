@@ -36,7 +36,7 @@ function buildReader() {
   ])
   hints.set(DecodeHintType.TRY_HARDER, true)
   // Delay between decode attempts (ms) — lower = snappier, higher = less CPU
-  return new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 80 })
+  return new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 50 })
 }
 
 /**
@@ -134,6 +134,9 @@ export default function CameraScan({ onScan, onClose, single = true }: CameraSca
       lastScanTime.current = now
       setFlash(true)
       window.setTimeout(() => setFlash(false), 250)
+      try {
+        navigator.vibrate?.(40)
+      } catch { /* ignore */ }
       onScanRef.current(text)
       if (single) {
         stop()

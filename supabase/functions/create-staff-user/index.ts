@@ -9,7 +9,17 @@ const cors = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-type Role = 'superadmin' | 'admin' | 'cashier'
+type Role = 'superadmin' | 'admin' | 'warehouse' | 'cashier' | 'receptionist'
+
+function isRole(v: unknown): v is Role {
+  return (
+    v === 'superadmin' ||
+    v === 'admin' ||
+    v === 'warehouse' ||
+    v === 'cashier' ||
+    v === 'receptionist'
+  )
+}
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -68,10 +78,7 @@ Deno.serve(async (req) => {
       const email = String(body.email ?? '').trim()
       const password = String(body.password ?? '')
       const displayName = String(body.displayName ?? '').trim() || email.split('@')[0]
-      const role: Role =
-        body.role === 'admin' || body.role === 'superadmin' || body.role === 'cashier'
-          ? body.role
-          : 'cashier'
+      const role: Role = isRole(body.role) ? body.role : 'cashier'
 
       if (!email || password.length < 6) {
         return json({ error: 'Invalid email/password' }, 400)
@@ -123,10 +130,7 @@ Deno.serve(async (req) => {
     // ── changeRole ──────────────────────────────────────────────────────────
     if (action === 'changeRole') {
       const userId = String(body.userId ?? '')
-      const role: Role | '' =
-        body.role === 'admin' || body.role === 'superadmin' || body.role === 'cashier'
-          ? body.role
-          : ''
+      const role: Role | '' = isRole(body.role) ? body.role : ''
       if (!userId || !role) return json({ error: 'userId and role required' }, 400)
       if (userId === user.id) return json({ error: 'Cannot change your own role here' }, 400)
 

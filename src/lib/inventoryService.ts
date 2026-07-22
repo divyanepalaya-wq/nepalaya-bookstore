@@ -725,21 +725,45 @@ export async function undoReplenish(params: {
 // ─── Lookups ──────────────────────────────────────────────────────────────────
 
 export async function findBoxByBarcode(barcode: string): Promise<(Box & { id: string }) | null> {
-  const upper = barcode.trim().toUpperCase()
-  const { data, error } = await supabase.from('boxes').select('*').eq('barcode', upper).limit(1).maybeSingle()
-  if (error) fail(error, 'Lookup failed')
-  if (data) return mapBox(data)
+  const raw = barcode.trim().replace(/[\r\n\t]+/g, '')
+  if (!raw) return null
 
-  const exact = barcode.trim()
-  if (exact === upper) return null
-  const { data: data2, error: error2 } = await supabase
-    .from('boxes')
-    .select('*')
-    .eq('barcode', exact)
-    .limit(1)
-    .maybeSingle()
-  if (error2) fail(error2, 'Lookup failed')
-  return data2 ? mapBox(data2) : null
+  const candidates = [
+    raw.toUpperCase(),
+    raw,
+    raw.replace(/\s+/g, ''),
+    raw.toUpperCase().replace(/\s+/g, ''),
+  ]
+  if (/^\d+$/.test(raw) && raw.length >= 4) {
+    candidates.push(`NPBX-PW-${raw.padStart(6, '0')}`)
+    candidates.push(`NPBX-BR-${raw.padStart(6, '0')}`)
+  }
+
+  const tried = new Set<string>()
+  for (const code of candidates) {
+    if (!code || tried.has(code)) continue
+    tried.add(code)
+    const { data, error } = await supabase.from('boxes').select('*').eq('barcode', code).limit(1).maybeSingle()
+    if (error) fail(error, 'Lookup failed')
+    if (data) return mapBox(data)
+  }
+
+  const suffix = raw.replace(/[^A-Za-z0-9-]/g, '').slice(-8)
+  if (suffix.length >= 4) {
+    const { data, error } = await supabase
+      .from('boxes')
+      .select('*')
+      .ilike('barcode', `%${suffix}`)
+      .neq('status', 'empty')
+      .limit(5)
+    if (error) fail(error, 'Lookup failed')
+    const hits = (data ?? [])
+      .map((r) => mapBox(r as Record<string, unknown>))
+      .filter((b) => !b.isDeleted && b.quantity > 0)
+    if (hits.length === 1) return hits[0]
+  }
+
+  return null
 }
 
 export async function getBookInventory(bookId: string): Promise<BookInventory | null> {

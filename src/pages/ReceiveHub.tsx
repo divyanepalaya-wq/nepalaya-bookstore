@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { PackagePlus, Truck, RotateCcw } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { canWarehouse, canPOS } from '@/lib/roles'
+import { canWarehouse, canVendorReceive } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 
 /** Stock in hub · Nepalaya cartons or vendor → shelf. */
@@ -9,7 +9,7 @@ export default function ReceiveHub() {
   const navigate = useNavigate()
   const { appUser } = useAuth()
   const wh = canWarehouse(appUser?.role)
-  const store = canPOS(appUser?.role)
+  const vendor = canVendorReceive(appUser?.role)
 
   const cards = [
     {
@@ -22,7 +22,7 @@ export default function ReceiveHub() {
       iconColor: 'text-blue-700',
     },
     {
-      show: store,
+      show: vendor,
       to: '/receive/vendor',
       title: 'Nepali / English',
       sub: 'Straight to store shelf',
@@ -70,6 +70,9 @@ export default function ReceiveHub() {
             </div>
           </button>
         ))}
+        {cards.length === 0 && (
+          <p className="text-sm text-gray-500 text-center py-8">No stock-in actions for your role</p>
+        )}
       </div>
     </div>
   )

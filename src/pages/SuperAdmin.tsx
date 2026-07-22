@@ -29,7 +29,7 @@ import { applyInventoryDelta, recordReturnMovement } from '@/lib/inventoryServic
 import { formatCurrency, formatDateTime } from '@/lib/utils'
 import type { AppUser, Sale, SaleItem, AuditLog, UserRole, ReturnStatus } from '@/types'
 import { getAuthErrorMessage } from '@/lib/authErrors'
-import { roleLabel } from '@/lib/roles'
+import { roleLabel, STAFF_ROLE_OPTIONS, rolePermissions } from '@/lib/roles'
 import { UserAvatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -50,18 +50,17 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: 'audit',     label: 'Audit',      icon: <FileText className="h-4 w-4" /> },
 ]
 
-// Labels match roleLabel() in @/lib/roles — operator-facing names, not raw role slugs.
-const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
-  { value: 'cashier',    label: 'Cashier' },
-  { value: 'admin',      label: 'Warehouse' },
-  { value: 'superadmin', label: 'Admin' },
-]
+// Labels match roleLabel() — operator-facing names + permission hints.
+const ROLE_OPTIONS = STAFF_ROLE_OPTIONS.map((r) => ({
+  value: r.value,
+  label: `${r.label} — ${r.desc}`,
+}))
 
 const userSchema = z.object({
   displayName: z.string().min(1, 'Required'),
   email: z.string().email('Valid email required'),
   password: z.string().min(8, 'Min 8 characters'),
-  role: z.enum(['superadmin', 'admin', 'cashier']),
+  role: z.enum(['superadmin', 'admin', 'warehouse', 'cashier', 'receptionist']),
 })
 type UserFormData = z.infer<typeof userSchema>
 
@@ -1004,9 +1003,14 @@ export default function SuperAdmin() {
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-500">{u.email}</td>
                     <td className="px-4 py-3">
-                      <Badge variant={u.role === 'superadmin' ? 'blue' : u.role === 'admin' ? 'orange' : 'gray'}>
-                        {roleLabel(u.role)}
-                      </Badge>
+                      <div className="space-y-1">
+                        <Badge variant={u.role === 'superadmin' ? 'blue' : u.role === 'admin' || u.role === 'warehouse' ? 'orange' : 'gray'}>
+                          {roleLabel(u.role)}
+                        </Badge>
+                        <p className="text-[11px] text-gray-400 max-w-[12rem]">
+                          {rolePermissions(u.role).join(' · ')}
+                        </p>
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <Badge variant={u.isActive ? 'green' : 'red'}>

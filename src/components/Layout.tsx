@@ -2,11 +2,11 @@ import { useMemo, useState, useCallback } from 'react'
 import { NavLink, useNavigate, useLocation, Outlet } from 'react-router-dom'
 import {
   ShoppingCart, LogOut, Menu, X, ChevronDown, User, Settings,
-  Boxes, Send, Inbox, BookOpen, PanelLeftClose, PanelLeft,
+  Boxes, Send, Inbox, BookOpen, PanelLeftClose, PanelLeft, LayoutDashboard,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
-import { roleLabel, canWarehouse, canPOS, isWarehouseOperator } from '@/lib/roles'
+import { roleLabel, canWarehouse, canPOS, isWarehouseOperator, canVendorReceive } from '@/lib/roles'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { UserAvatar } from '@/components/ui/Avatar'
@@ -40,6 +40,7 @@ export function Layout({ children }: { children?: ReactNode }) {
   const role = appUser?.role
   const wh = canWarehouse(role)
   const pos = canPOS(role)
+  const vendor = canVendorReceive(role)
   const warehouseOnly = isWarehouseOperator(role)
 
   const toggleCollapse = useCallback(() => {
@@ -51,8 +52,9 @@ export function Layout({ children }: { children?: ReactNode }) {
   }, [])
 
   const mainNav: NavLinkItem[] = [
-    { to: '/receive', label: 'Stock in', sub: 'Add stock', icon: <Inbox className="h-5 w-5" />, show: wh || pos },
-    { to: '/send', label: 'Send', sub: 'Scan · move', icon: <Send className="h-5 w-5" />, show: wh || pos },
+    { to: '/overview', label: 'Overview', sub: 'Totals', icon: <LayoutDashboard className="h-5 w-5" />, show: wh || pos },
+    { to: '/receive', label: 'Stock in', sub: 'Add stock', icon: <Inbox className="h-5 w-5" />, show: wh || vendor },
+    { to: '/send', label: 'Send', sub: 'Scan · move', icon: <Send className="h-5 w-5" />, show: wh },
     { to: '/sell', label: 'Sell', sub: 'POS', icon: <ShoppingCart className="h-5 w-5" />, show: pos },
     { to: '/books', label: 'Books', sub: 'Catalog', icon: <BookOpen className="h-5 w-5" />, show: true },
     { to: '/cartons', label: 'Cartons', sub: 'Nepalaya sheet', icon: <Boxes className="h-5 w-5" />, show: wh },
@@ -61,15 +63,15 @@ export function Layout({ children }: { children?: ReactNode }) {
 
   const mobileTabs = warehouseOnly
     ? [
-        { to: '/receive', label: 'Stock in', icon: <Inbox className="h-5 w-5" /> },
+        { to: '/overview', label: 'Home', icon: <LayoutDashboard className="h-5 w-5" /> },
         { to: '/send', label: 'Send', icon: <Send className="h-5 w-5" /> },
         { to: '/cartons', label: 'Cartons', icon: <Boxes className="h-5 w-5" /> },
         { to: '/books', label: 'Books', icon: <BookOpen className="h-5 w-5" /> },
       ]
     : [
-        { to: '/receive', label: 'Stock in', icon: <Inbox className="h-5 w-5" /> },
-        { to: '/send', label: 'Send', icon: <Send className="h-5 w-5" /> },
+        { to: '/overview', label: 'Home', icon: <LayoutDashboard className="h-5 w-5" /> },
         { to: '/sell', label: 'Sell', icon: <ShoppingCart className="h-5 w-5" /> },
+        { to: '/receive', label: 'Stock in', icon: <Inbox className="h-5 w-5" /> },
         { to: '/books', label: 'Books', icon: <BookOpen className="h-5 w-5" /> },
       ]
 
@@ -80,6 +82,7 @@ export function Layout({ children }: { children?: ReactNode }) {
   useKeyboardShortcuts(useMemo(() => ({
     '?': () => openGuide(),
     '[': () => toggleCollapse(),
+    'g h': () => navigate('/overview'),
     'g r': () => navigate('/receive'),
     'g n': () => navigate('/send'),
     'g p': () => navigate('/sell'),

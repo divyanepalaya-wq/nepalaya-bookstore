@@ -3,7 +3,7 @@ export type AppTimestamp = string | Date | { toDate: () => Date; toMillis?: () =
 
 // ─── Roles ───────────────────────────────────────────────────────────────────
 
-export type UserRole = 'superadmin' | 'admin' | 'cashier'
+export type UserRole = 'superadmin' | 'admin' | 'warehouse' | 'cashier' | 'receptionist'
 
 // ─── User ─────────────────────────────────────────────────────────────────────
 
