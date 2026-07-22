@@ -1,48 +1,99 @@
-import { useState } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { useMemo, useState, useCallback } from 'react'
+import { NavLink, useNavigate, useLocation, Outlet } from 'react-router-dom'
 import {
-  Package,
-  ShoppingCart,
-  Tag,
-  BarChart2,
-  LogOut,
-  Menu,
-  X,
-  ChevronDown,
-  User,
-  Settings,
+  ShoppingCart, LogOut, Menu, X, ChevronDown, User, Settings,
+  Boxes, Send, Inbox, BookOpen, PanelLeftClose, PanelLeft, LayoutDashboard,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
+import { roleLabel, canWarehouse, canPOS, isWarehouseOperator, canVendorReceive } from '@/lib/roles'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { UserAvatar } from '@/components/ui/Avatar'
+import { WorkflowGuide, HelpButton, useFirstRunGuide } from '@/components/WorkflowGuide'
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import type { ReactNode } from 'react'
 
-interface NavItem {
+const COLLAPSE_KEY = 'nepalaya-sidebar-collapsed'
+
+interface NavLinkItem {
   to: string
   label: string
+  sub?: string
   icon: ReactNode
-  roles: string[]
+  show: boolean
 }
 
-const navItems: NavItem[] = [
-  { to: '/stock',    label: 'Stock',    icon: <Package className="h-5 w-5" />,      roles: ['superadmin', 'admin', 'cashier'] },
-  { to: '/pos',      label: 'POS',      icon: <ShoppingCart className="h-5 w-5" />, roles: ['superadmin', 'admin', 'cashier'] },
-  { to: '/discounts',label: 'Discounts',icon: <Tag className="h-5 w-5" />,          roles: ['superadmin', 'admin'] },
-  { to: '/admin',    label: 'Analytics',icon: <BarChart2 className="h-5 w-5" />,    roles: ['superadmin'] },
-  { to: '/account',  label: 'Account',  icon: <Settings className="h-5 w-5" />,     roles: ['superadmin', 'admin', 'cashier'] },
-]
-
-export function Layout({ children }: { children: ReactNode }) {
+export function Layout({ children }: { children?: ReactNode }) {
   const { appUser, signOut } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem(COLLAPSE_KEY) === '1' } catch { return false }
+  })
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [signOutConfirm, setSignOutConfirm] = useState(false)
   const [signingOut, setSigningOut] = useState(false)
+  const guide = useFirstRunGuide()
 
-  const allowedNav = navItems.filter((n) => appUser && n.roles.includes(appUser.role))
+  const role = appUser?.role
+  const wh = canWarehouse(role)
+  const pos = canPOS(role)
+  const vendor = canVendorReceive(role)
+  const warehouseOnly = isWarehouseOperator(role)
+
+  const toggleCollapse = useCallback(() => {
+    setCollapsed((v) => {
+      const next = !v
+      try { localStorage.setItem(COLLAPSE_KEY, next ? '1' : '0') } catch { /* ignore */ }
+      return next
+    })
+  }, [])
+
+  const mainNav: NavLinkItem[] = [
+    { to: '/overview', label: 'Overview', sub: 'Totals', icon: <LayoutDashboard className="h-5 w-5" />, show: wh || pos },
+    { to: '/receive', label: 'Stock in', sub: 'Add stock', icon: <Inbox className="h-5 w-5" />, show: wh || vendor },
+    { to: '/send', label: 'Send', sub: 'Scan · move', icon: <Send className="h-5 w-5" />, show: wh },
+    { to: '/sell', label: 'Sell', sub: 'POS', icon: <ShoppingCart className="h-5 w-5" />, show: pos },
+    { to: '/books', label: 'Books', sub: 'Catalog', icon: <BookOpen className="h-5 w-5" />, show: true },
+    { to: '/cartons', label: 'Cartons', sub: 'Nepalaya sheet', icon: <Boxes className="h-5 w-5" />, show: wh },
+    { to: '/settings', label: 'Settings', icon: <Settings className="h-5 w-5" />, show: true },
+  ].filter((n) => n.show)
+
+  const mobileTabs = warehouseOnly
+    ? [
+        { to: '/overview', label: 'Home', icon: <LayoutDashboard className="h-5 w-5" /> },
+        { to: '/send', label: 'Send', icon: <Send className="h-5 w-5" /> },
+        { to: '/cartons', label: 'Cartons', icon: <Boxes className="h-5 w-5" /> },
+        { to: '/books', label: 'Books', icon: <BookOpen className="h-5 w-5" /> },
+      ]
+    : [
+        { to: '/overview', label: 'Home', icon: <LayoutDashboard className="h-5 w-5" /> },
+        { to: '/sell', label: 'Sell', icon: <ShoppingCart className="h-5 w-5" /> },
+        { to: '/receive', label: 'Stock in', icon: <Inbox className="h-5 w-5" /> },
+        { to: '/books', label: 'Books', icon: <BookOpen className="h-5 w-5" /> },
+      ]
+
+  const openGuide = guide.openGuide
+  const closeGuide = guide.close
+  const guideIsOpen = guide.open
+
+  useKeyboardShortcuts(useMemo(() => ({
+    '?': () => openGuide(),
+    '[': () => toggleCollapse(),
+    'g h': () => navigate('/overview'),
+    'g r': () => navigate('/receive'),
+    'g n': () => navigate('/send'),
+    'g p': () => navigate('/sell'),
+    'g b': () => navigate('/books'),
+    'g c': () => navigate('/cartons'),
+    escape: () => {
+      setSidebarOpen(false)
+      setUserMenuOpen(false)
+      if (guideIsOpen) closeGuide()
+    },
+  }), [openGuide, closeGuide, guideIsOpen, toggleCollapse, navigate]))
 
   const handleSignOut = async () => {
     setSigningOut(true)
@@ -55,95 +106,87 @@ export function Layout({ children }: { children: ReactNode }) {
     }
   }
 
-  const roleBadge = appUser?.role === 'superadmin'
-    ? 'bg-accent-100 text-accent-700'
-    : appUser?.role === 'admin'
-    ? 'bg-brand-100 text-brand-700'
-    : 'bg-gray-100 text-gray-600'
-
   return (
     <div className="flex h-screen bg-gray-50">
-      {/* Mobile overlay */}
       {sidebarOpen && (
-        <div
-          className="fixed inset-0 z-20 bg-black/40 lg:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
+        <div className="fixed inset-0 z-20 bg-black/40 lg:hidden" onClick={() => setSidebarOpen(false)} />
       )}
 
-      {/* Sidebar */}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-30 flex w-64 flex-col bg-white border-r border-accent-100 transition-transform lg:static lg:translate-x-0',
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+          'fixed inset-y-0 left-0 z-30 flex flex-col bg-white border-r border-accent-100 transition-all duration-200 lg:static lg:translate-x-0',
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full',
+          collapsed ? 'w-[4.25rem]' : 'w-64',
         )}
       >
-        {/* Logo */}
-        <div className="flex h-16 items-center gap-3 px-4 border-b border-accent-100 bg-white">
-          <img src="/logo.svg" alt="Nepalaya Publication" className="h-14 w-auto object-contain" />
-          {/* <p className="text-xs font-semibold text-gray-500 truncate">Book Central</p> */}
-          <button
-            className="ml-auto lg:hidden text-gray-400 hover:text-gray-600"
-            onClick={() => setSidebarOpen(false)}
-          >
+        <div className={cn('flex h-14 shrink-0 items-center border-b border-accent-100', collapsed ? 'px-2' : 'gap-2 px-3')}>
+          <img src="/logo.jpeg" alt="Nepalaya" className={cn('object-contain shrink-0', collapsed ? 'h-8 w-8' : 'h-9 w-auto max-w-[120px]')} />
+          <button type="button" onClick={toggleCollapse} className="hidden lg:inline-flex ml-auto h-8 w-8 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100">
+            {collapsed ? <PanelLeft className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+          </button>
+          <button type="button" className="ml-auto lg:hidden p-1 text-gray-400" onClick={() => setSidebarOpen(false)}>
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        {/* Nav */}
-        <nav className="flex-1 overflow-y-auto py-4 px-3">
-          <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-accent-400">
-            Menu
-          </p>
-          {allowedNav.map((item) => (
+        <nav className={cn('flex-1 overflow-y-auto py-3', collapsed ? 'px-1.5' : 'px-3')}>
+          {!collapsed && (
+            <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-wider text-accent-400">
+              Stock in · Send · Sell
+            </p>
+          )}
+          {mainNav.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               onClick={() => setSidebarOpen(false)}
+              title={collapsed ? item.label : undefined}
               className={({ isActive }) =>
                 cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors mb-0.5',
-                  isActive
-                    ? 'bg-accent-50 text-accent-700 font-semibold hover:bg-accent-100'
-                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                  'flex items-center gap-3 rounded-xl px-3 py-3 mb-1 transition',
+                  collapsed && 'justify-center px-2',
+                  isActive ? 'bg-accent-50 text-accent-800 font-semibold' : 'text-gray-600 hover:bg-gray-100',
                 )
               }
             >
               {item.icon}
-              {item.label}
+              {!collapsed && (
+                <span className="min-w-0">
+                  <span className="block text-base font-semibold leading-tight">{item.label}</span>
+                  {item.sub && <span className="block text-[11px] font-normal text-gray-400">{item.sub}</span>}
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>
 
-        {/* User */}
-        <div className="border-t border-gray-200 p-3">
-          <div className="relative">
+        <div className={cn('border-t border-gray-200', collapsed ? 'p-1.5' : 'p-3')}>
+          {!collapsed && <HelpButton onClick={guide.openGuide} />}
+          <div className="relative mt-1">
             <button
+              type="button"
               onClick={() => setUserMenuOpen(!userMenuOpen)}
-              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm hover:bg-gray-100 transition-colors"
+              className={cn('flex w-full items-center gap-3 rounded-lg py-2.5 text-sm hover:bg-gray-100', collapsed ? 'justify-center px-2' : 'px-3')}
             >
               <UserAvatar name={appUser?.displayName ?? ''} className="h-8 w-8 shrink-0" />
-              <div className="min-w-0 flex-1 text-left">
-                <p className="text-sm font-medium text-gray-900 truncate">{appUser?.displayName}</p>
-                <span className={cn('text-xs font-medium px-1.5 py-0.5 rounded-full', roleBadge)}>
-                  {appUser?.role}
-                </span>
-              </div>
-              <ChevronDown className="h-4 w-4 text-gray-400" />
+              {!collapsed && (
+                <>
+                  <div className="min-w-0 flex-1 text-left">
+                    <p className="text-sm font-medium truncate">{appUser?.displayName}</p>
+                    <span className="text-xs text-gray-500">{roleLabel(role)}</span>
+                  </div>
+                  <ChevronDown className="h-4 w-4 text-gray-400" />
+                </>
+              )}
             </button>
-
             {userMenuOpen && (
-              <div className="absolute bottom-full left-0 right-0 mb-1 rounded-lg border border-gray-200 bg-white shadow-lg py-1">
-                <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100 mb-1">
-                  <User className="h-4 w-4 text-gray-400" />
-                  <span className="text-xs text-gray-500 truncate">{appUser?.email}</span>
+              <div className={cn('absolute bottom-full mb-1 rounded-lg border bg-white shadow-lg py-1 z-40', collapsed ? 'left-full ml-1 w-56' : 'left-0 right-0')}>
+                <div className="flex items-center gap-2 px-4 py-2 border-b text-xs text-gray-500">
+                  <User className="h-4 w-4" />
+                  <span className="truncate">{appUser?.email}</span>
                 </div>
-                <button
-                  onClick={() => { setUserMenuOpen(false); setSignOutConfirm(true) }}
-                  className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
-                >
-                  <LogOut className="h-4 w-4" />
-                  Sign out
+                <button type="button" onClick={() => { setUserMenuOpen(false); setSignOutConfirm(true) }} className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50">
+                  <LogOut className="h-4 w-4" /> Sign out
                 </button>
               </div>
             )}
@@ -151,40 +194,45 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      {/* Main */}
-      <div className="flex flex-1 flex-col overflow-hidden">
-        {/* Topbar (mobile) */}
-        <header className="flex h-16 items-center gap-3 border-b border-gray-200 bg-white px-4 lg:hidden">
-          <button onClick={() => setSidebarOpen(true)} className="text-gray-500 hover:text-gray-700">
-            <Menu className="h-6 w-6" />
+      <div className="flex flex-1 flex-col overflow-hidden min-w-0">
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-white px-3 lg:hidden">
+          <button type="button" onClick={() => setSidebarOpen(true)} className="flex h-10 w-10 items-center justify-center rounded-lg hover:bg-gray-100">
+            <Menu className="h-5 w-5" />
           </button>
-          <div className="flex items-center gap-2">
-            <img src="/logo.svg" alt="Nepalaya" className="h-14 w-auto object-contain" />
-            {/* <span className="text-xs font-semibold text-gray-500">Book Central</span> */}
-          </div>
+          <img src="/logo.jpeg" alt="Nepalaya" className="h-7 w-auto object-contain" />
         </header>
 
-        <main className="flex-1 overflow-y-auto p-4 lg:p-6">
-          {children}
+        <main className="flex-1 overflow-y-auto p-4 lg:p-6 pb-24 lg:pb-6">
+          {children ?? <Outlet />}
         </main>
+
+        <nav className="lg:hidden fixed bottom-0 inset-x-0 z-20 bg-white border-t safe-area-pb">
+          <div className="grid grid-cols-4">
+            {mobileTabs.map((tab) => {
+              const active = location.pathname === tab.to || location.pathname.startsWith(tab.to + '/')
+              return (
+                <button
+                  key={tab.to}
+                  type="button"
+                  onClick={() => navigate(tab.to)}
+                  className={cn('flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-semibold', active ? 'text-accent-700' : 'text-gray-400')}
+                >
+                  {tab.icon}
+                  {tab.label}
+                </button>
+              )
+            })}
+          </div>
+        </nav>
       </div>
 
-      {/* Sign-out confirmation modal */}
-      <Modal
-        open={signOutConfirm}
-        onClose={() => setSignOutConfirm(false)}
-        title="Sign Out"
-        size="sm"
-      >
+      <WorkflowGuide open={guide.open} onClose={guide.close} />
+      <Modal open={signOutConfirm} onClose={() => setSignOutConfirm(false)} title="Sign Out" size="sm">
         <div className="space-y-4">
-          <p className="text-sm text-gray-600">Are you sure you want to sign out?</p>
+          <p className="text-sm text-gray-600">Sign out?</p>
           <div className="flex gap-3 justify-end">
-            <Button variant="outline" onClick={() => setSignOutConfirm(false)} disabled={signingOut}>
-              Cancel
-            </Button>
-            <Button variant="danger" loading={signingOut} onClick={handleSignOut}>
-              Sign Out
-            </Button>
+            <Button variant="outline" onClick={() => setSignOutConfirm(false)}>Cancel</Button>
+            <Button variant="danger" loading={signingOut} onClick={handleSignOut}>Sign Out</Button>
           </div>
         </div>
       </Modal>

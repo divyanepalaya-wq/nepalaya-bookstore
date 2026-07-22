@@ -1,12 +1,14 @@
-import type { Sale } from '@/types'
+import type { AppTimestamp, Sale } from '@/types'
+import { toMillis } from '@/lib/utils'
 
 function fmt(n: number) {
   return `Rs. ${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-function dtStr(ts: { toDate: () => Date } | null | undefined) {
-  if (!ts) return ''
-  const d = ts.toDate()
+function dtStr(ts: AppTimestamp | null | undefined) {
+  const ms = toMillis(ts)
+  if (!ms) return ''
+  const d = new Date(ms)
   return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) +
     '  ' + d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
 }

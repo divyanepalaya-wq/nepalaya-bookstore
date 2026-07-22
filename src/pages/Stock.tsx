@@ -1,8 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import {
-  collection, doc, addDoc, updateDoc, writeBatch,
-  runTransaction, serverTimestamp, query, orderBy, where, getDocs,
-} from 'firebase/firestore'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -13,10 +9,13 @@ import {
   Upload, Download, FileSpreadsheet, ListChecks, FileDown, X, Trash2,
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { db } from '@/lib/firebase'
+import { supabase } from '@/lib/supabase'
+import { bookToRow } from '@/lib/mappers'
 import { useAuth } from '@/contexts/AuthContext'
 import { useBooks } from '@/contexts/BooksContext'
+import { useWarehouse } from '@/contexts/WarehouseContext'
 import { writeAuditLog } from '@/lib/auditLog'
+import { applyInventoryDelta, writeMovement } from '@/lib/inventoryService'
 import { formatCurrency, formatDateTime, cn } from '@/lib/utils'
 import { downloadCSV } from '@/lib/csvUtils'
 import type { Book, StockTransaction, BookCategory, BookType } from '@/types'
@@ -107,17 +106,36 @@ interface ImportRow {
   _error?: string
 }
 
+/** Map a stock_transactions row (snake_case) to the app's StockTransaction type. */
+function mapStockTransaction(row: Record<string, unknown>): StockTransaction & { id: string } {
+  return {
+    id: row.id as string,
+    bookId: row.book_id as string,
+    bookName: row.book_name as string,
+    type: row.type as StockTransaction['type'],
+    quantity: Number(row.quantity ?? 0),
+    previousStock: Number(row.previous_stock ?? 0),
+    newStock: Number(row.new_stock ?? 0),
+    reason: (row.reason as string) ?? '',
+    reference: (row.reference as string) ?? undefined,
+    performedBy: (row.performed_by as string) ?? '',
+    performedByName: (row.performed_by_name as string) ?? '',
+    createdAt: row.created_at as StockTransaction['createdAt'],
+  }
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function Stock() {
   const { appUser } = useAuth()
   const { books, loading: loadingBooks } = useBooks()
+  const { bookstoreId } = useWarehouse()
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
   const [languageFilter, setLanguageFilter] = useState('')
   const [modalType, setModalType] = useState<ModalType>(null)
   const [selectedBook, setSelectedBook] = useState<Book | null>(null)
-  const [history, setHistory] = useState<StockTransaction[]>([])
+  const [history, setHistory] = useState<(StockTransaction & { id: string })[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [importRows, setImportRows] = useState<ImportRow[]>([])
@@ -185,18 +203,20 @@ export default function Stock() {
     setSubmitting(true)
     try {
       if (modalType === 'add') {
-        const ref = await addDoc(collection(db, 'books'), {
+        const row = bookToRow({
           ...data,
+          language: data.language as Book['language'],
+          category: data.category as Book['category'],
           author: data.author ?? '',
           costPrice: data.costPrice ?? 0,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
           createdBy: appUser.uid,
         })
+        const { data: inserted, error } = await supabase.from('books').insert(row as never).select('id').single()
+        if (error) throw new Error(error.message)
         await writeAuditLog({
           action: 'book_created',
           entity: 'book',
-          entityId: ref.id,
+          entityId: inserted.id as string,
           details: `Added book "${data.name}"`,
           performedBy: appUser.uid,
           performedByName: appUser.displayName,
@@ -204,12 +224,15 @@ export default function Stock() {
         })
         toast.success('Book added successfully')
       } else if (modalType === 'edit' && selectedBook) {
-        await updateDoc(doc(db, 'books', selectedBook.id), {
+        const row = bookToRow({
           ...data,
+          language: data.language as Book['language'],
+          category: data.category as Book['category'],
           author: data.author ?? '',
           costPrice: data.costPrice ?? 0,
-          updatedAt: serverTimestamp(),
         })
+        const { error } = await supabase.from('books').update(row as never).eq('id', selectedBook.id)
+        if (error) throw new Error(error.message)
         await writeAuditLog({
           action: 'book_updated',
           entity: 'book',
@@ -249,33 +272,39 @@ export default function Stock() {
   const saveStockAdj = async (data: StockAdjData) => {
     if (!appUser || !selectedBook) return
     const isIn = modalType === 'stockIn'
+    const delta = isIn ? data.quantity : -data.quantity
     setSubmitting(true)
     try {
-      await runTransaction(db, async (tx) => {
-        const bookRef = doc(db, 'books', selectedBook.id)
-        const bookSnap = await tx.get(bookRef)
-        const current = (bookSnap.data()?.inStock ?? 0) as number
-        const next = isIn ? current + data.quantity : current - data.quantity
+      const current = selectedBook.inStock
+      const next = current + delta
+      if (next < 0) throw new Error(`Only ${current} in stock`)
 
-        if (next < 0) throw new Error(`Only ${current} in stock`)
-
-        tx.update(bookRef, { inStock: next, updatedAt: serverTimestamp() })
-
-        const txRef = doc(collection(db, 'stockTransactions'))
-        tx.set(txRef, {
-          bookId: selectedBook.id,
-          bookName: selectedBook.name,
-          type: isIn ? 'in' : 'out',
-          quantity: data.quantity,
-          previousStock: current,
-          newStock: next,
-          reason: data.reason,
-          reference: data.reference ?? '',
-          performedBy: appUser.uid,
-          performedByName: appUser.displayName,
-          createdAt: serverTimestamp(),
-        })
+      // Dual-write to book_inventory (bookstore location) via the atomic RPC
+      await applyInventoryDelta(selectedBook.id, bookstoreId, bookstoreId, delta)
+      await writeMovement({
+        type: 'adjustment',
+        bookId: selectedBook.id,
+        bookName: selectedBook.name,
+        quantity: delta,
+        warehouseId: bookstoreId,
+        reason: data.reason,
+        performedBy: appUser.uid,
+        performedByName: appUser.displayName,
       })
+
+      const { error } = await supabase.from('stock_transactions').insert({
+        book_id: selectedBook.id,
+        book_name: selectedBook.name,
+        type: isIn ? 'in' : 'out',
+        quantity: data.quantity,
+        previous_stock: current,
+        new_stock: next,
+        reason: data.reason,
+        reference: data.reference ?? '',
+        performed_by: appUser.uid,
+        performed_by_name: appUser.displayName,
+      })
+      if (error) throw new Error(error.message)
 
       await writeAuditLog({
         action: isIn ? 'stock_in' : 'stock_out',
@@ -362,7 +391,7 @@ export default function Stock() {
     reader.readAsArrayBuffer(file)
   }
 
-  const BATCH_SIZE = 490  // Firestore max is 500 writes per batch; stay under
+  const BATCH_SIZE = 500  // chunk large imports to keep request payloads reasonable
 
   const confirmImport = async () => {
     if (!appUser) return
@@ -375,9 +404,9 @@ export default function Stock() {
 
     setImporting(true)
 
-    // Chunk rows into batches of BATCH_SIZE and commit sequentially.
-    // Each batch is atomic within itself; a failure mid-way will show progress
-    // so the user knows exactly how many rows were committed before the error.
+    // Chunk rows into batches and insert sequentially. Each batch is one
+    // request; a failure mid-way will show progress so the user knows how
+    // many rows were committed before the error.
     const chunks: ImportRow[][] = []
     for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
       chunks.push(validRows.slice(i, i + BATCH_SIZE))
@@ -388,27 +417,23 @@ export default function Stock() {
 
     try {
       for (const chunk of chunks) {
-        const batch = writeBatch(db)
-        chunk.forEach((row) => {
-          const ref = doc(collection(db, 'books'))
-          batch.set(ref, {
-            name: row.name,
-            author: row.author ?? '',
-            isbn: row.isbn ?? '',
-            language: row.language,
-            category: row.category,
-            publisher: row.publisher ?? '',
-            mrp: row.mrp,
-            costPrice: row.costPrice ?? 0,
-            inStock: row.inStock,
-            minStockAlert: row.minStockAlert,
-            description: row.description ?? '',
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-            createdBy: appUser.uid,
-          })
-        })
-        await batch.commit()
+        const rows = chunk.map((row) => ({
+          name: row.name,
+          author: row.author ?? '',
+          isbn: row.isbn ?? '',
+          language: row.language,
+          category: row.category,
+          publisher: row.publisher ?? '',
+          mrp: row.mrp,
+          cost_price: row.costPrice ?? 0,
+          in_stock: row.inStock,
+          min_stock_alert: row.minStockAlert,
+          description: row.description ?? '',
+          created_by: appUser.uid,
+        }))
+        // eslint-disable-next-line no-await-in-loop
+        const { error } = await supabase.from('books').insert(rows as never)
+        if (error) throw new Error(error.message)
         committed += chunk.length
         setImportProgress({ done: committed, total: validRows.length })
       }
@@ -444,14 +469,13 @@ export default function Stock() {
     setModalType('history')
     setLoadingHistory(true)
     try {
-      const snap = await getDocs(
-        query(
-          collection(db, 'stockTransactions'),
-          where('bookId', '==', book.id),
-          orderBy('createdAt', 'desc')
-        )
-      )
-      setHistory(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as StockTransaction))
+      const { data, error } = await supabase
+        .from('stock_transactions')
+        .select('*')
+        .eq('book_id', book.id)
+        .order('created_at', { ascending: false })
+      if (error) throw new Error(error.message)
+      setHistory((data ?? []).map((r) => mapStockTransaction(r as Record<string, unknown>)))
     } catch {
       toast.error('Failed to load history')
     } finally {
@@ -466,28 +490,25 @@ export default function Stock() {
   const saveBulkEdit = async (data: BulkEditData) => {
     if (!appUser || selectedIds.size === 0) return
     // Only apply fields that were actually filled in
-    const patch: Record<string, unknown> = { updatedAt: serverTimestamp() }
+    const patch: Record<string, unknown> = {}
     if (data.category)      patch.category      = data.category
     if (data.language)      patch.language      = data.language
     if (data.mrp !== '')    patch.mrp            = Number(data.mrp)
-    if (data.costPrice !== '') patch.costPrice   = Number(data.costPrice)
-    if (data.minStockAlert !== '') patch.minStockAlert = Number(data.minStockAlert)
+    if (data.costPrice !== '') patch.cost_price  = Number(data.costPrice)
+    if (data.minStockAlert !== '') patch.min_stock_alert = Number(data.minStockAlert)
 
-    if (Object.keys(patch).length === 1) { toast.error('Fill in at least one field to update'); return }
+    if (Object.keys(patch).length === 0) { toast.error('Fill in at least one field to update'); return }
 
     setBulkSubmitting(true)
     try {
       const ids = [...selectedIds]
-      const BATCH_SIZE = 490
-      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
-        const batch = writeBatch(db)
-        ids.slice(i, i + BATCH_SIZE).forEach((id) => batch.update(doc(db, 'books', id), patch))
-        await batch.commit()
-      }
+      const { error } = await supabase.from('books').update(patch as never).in('id', ids)
+      if (error) throw new Error(error.message)
+
       await writeAuditLog({
         action: 'book_updated',
         entity: 'book',
-        details: `Bulk updated ${ids.length} book${ids.length !== 1 ? 's' : ''}: ${Object.keys(patch).filter((k) => k !== 'updatedAt').join(', ')}`,
+        details: `Bulk updated ${ids.length} book${ids.length !== 1 ? 's' : ''}: ${Object.keys(patch).join(', ')}`,
         performedBy: appUser.uid,
         performedByName: appUser.displayName,
         role: appUser.role,
@@ -510,18 +531,12 @@ export default function Stock() {
     setBulkDeleting(true)
     try {
       const ids = [...selectedIds]
-      const BATCH_SIZE = 490
-      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
-        const batch = writeBatch(db)
-        ids.slice(i, i + BATCH_SIZE).forEach((id) =>
-          batch.update(doc(db, 'books', id), {
-            isDeleted: true,
-            deletedAt: serverTimestamp(),
-            deletedBy: appUser.uid,
-          })
-        )
-        await batch.commit()
-      }
+      const { error } = await supabase
+        .from('books')
+        .update({ is_deleted: true, deleted_at: new Date().toISOString(), deleted_by: appUser.uid } as never)
+        .in('id', ids)
+      if (error) throw new Error(error.message)
+
       await writeAuditLog({
         action: 'book_deleted',
         entity: 'book',

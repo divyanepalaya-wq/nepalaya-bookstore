@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Nepalaya Books — User Manual</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm 16mm 20mm 16mm;
+      @bottom-center {
+        content: "Nepalaya Books User Manual  ·  " counter(page);
+        font-size: 9px;
+        color: #666;
+      }
+    }
+    :root {
+      --ink: #1a1a1a;
+      --muted: #555;
+      --line: #e5e5e5;
+      --brand: #9c090e;
+      --accent: #f37023;
+      --soft: #faf7f5;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      color: var(--ink);
+      font-size: 10.5pt;
+      line-height: 1.45;
+      margin: 0;
+    }
+    h1 { font-size: 26pt; margin: 0 0 8px; color: var(--brand); letter-spacing: -0.02em; }
+    h2 {
+      font-size: 14pt;
+      color: var(--brand);
+      border-bottom: 2px solid var(--accent);
+      padding-bottom: 4px;
+      margin: 28px 0 12px;
+      page-break-after: avoid;
+    }
+    h3 {
+      font-size: 11.5pt;
+      margin: 18px 0 6px;
+      color: #222;
+      page-break-after: avoid;
+    }
+    h4 { font-size: 10.5pt; margin: 12px 0 4px; color: #333; }
+    p { margin: 0 0 8px; }
+    ul, ol { margin: 0 0 10px; padding-left: 1.25em; }
+    li { margin-bottom: 3px; }
+    .cover {
+      min-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 40px 10px;
+      page-break-after: always;
+    }
+    .cover .eyebrow {
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 9pt;
+      color: var(--accent);
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+    .cover .sub {
+      font-size: 13pt;
+      color: var(--muted);
+      max-width: 28em;
+      margin-bottom: 28px;
+    }
+    .meta {
+      margin-top: 40px;
+      font-size: 9.5pt;
+      color: var(--muted);
+      border-top: 1px solid var(--line);
+      padding-top: 14px;
+    }
+    .toc { page-break-after: always; }
+    .toc a { color: var(--ink); text-decoration: none; }
+    .toc li { margin-bottom: 6px; }
+    .role-card {
+      background: var(--soft);
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--accent);
+      padding: 12px 14px;
+      margin: 10px 0 16px;
+      page-break-inside: avoid;
+    }
+    .role-card strong { color: var(--brand); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 9.5pt;
+      margin: 8px 0 14px;
+      page-break-inside: avoid;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 6px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #f3f3f3; font-weight: 600; }
+    .step {
+      counter-increment: step;
+      margin: 8px 0;
+      padding-left: 28px;
+      position: relative;
+      page-break-inside: avoid;
+    }
+    .steps { counter-reset: step; }
+    .step::before {
+      content: counter(step);
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--brand);
+      color: #fff;
+      font-size: 9pt;
+      font-weight: 700;
+      text-align: center;
+      line-height: 20px;
+    }
+    .tip, .warn, .fix {
+      padding: 10px 12px;
+      margin: 10px 0;
+      border-radius: 4px;
+      font-size: 9.5pt;
+      page-break-inside: avoid;
+    }
+    .tip { background: #eef8f0; border-left: 3px solid #2f9e44; }
+    .warn { background: #fff6e8; border-left: 3px solid var(--accent); }
+    .fix { background: #fdeeee; border-left: 3px solid var(--brand); }
+    .kbd {
+      display: inline-block;
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 8.5pt;
+      background: #f0f0f0;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+      padding: 1px 5px;
+    }
+    .flow {
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 9pt;
+      background: #111;
+      color: #f5f5f5;
+      padding: 12px 14px;
+      border-radius: 6px;
+      margin: 10px 0 14px;
+      white-space: pre;
+      page-break-inside: avoid;
+    }
+    .section { page-break-before: always; }
+    .section.first { page-break-before: auto; }
+    footer.note {
+      margin-top: 24px;
+      font-size: 8.5pt;
+      color: #777;
+    }
+  </style>
+</head>
+<body>
+
+<!-- COVER -->
+<section class="cover">
+  <div class="eyebrow">Nepalaya Publication · Internal Operations</div>
+  <h1>Nepalaya Books<br/>User Manual</h1>
+  <p class="sub">
+    How to receive print runs, move cartons, put books on sale, sell at the counter,
+    and troubleshoot common issues — written for Cashier, Warehouse, and Admin roles.
+  </p>
+  <div class="meta">
+    <div><strong>Product:</strong> Nepalaya Books (Publishing Operations)</div>
+    <div><strong>Audience:</strong> Store &amp; warehouse staff (3–5 people)</div>
+    <div><strong>Training goal:</strong> Productive in under one hour; fluent in one day</div>
+    <div><strong>Version:</strong> July 2026</div>
+  </div>
+</section>
+
+<!-- TOC -->
+<section class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li>What this system is</li>
+    <li>Roles at a glance</li>
+    <li>The big picture (stock flow)</li>
+    <li>Getting started (login &amp; navigation)</li>
+    <li>Cashier guide</li>
+    <li>Warehouse guide</li>
+    <li>Admin guide</li>
+    <div style="height:6px"></div>
+    <li>Feature reference (every screen)</li>
+    <li>Daily / weekly checklists</li>
+    <li>Troubleshooting &amp; solutions</li>
+    <li>Glossary</li>
+    <li>Keyboard shortcuts</li>
+  </ol>
+</section>
+
+<!-- 1 -->
+<section class="section first">
+  <h2>1. What this system is</h2>
+  <p>
+    <strong>Nepalaya Books</strong> is the operating system for Nepalaya Publication after books leave the printer.
+    It tracks where every copy is, moves stock between Main Warehouse → Backroom → Bookstore Floor,
+    and sells only from Bookstore Floor stock through the Point of Sale (POS).
+  </p>
+  <p><strong>It is not</strong> a full ERP or general warehouse product. It is built to feel like
+    Square POS + a simple warehouse app.</p>
+
+  <h3>Core rule</h3>
+  <div class="tip">
+    <strong>Every physical copy lives in exactly one place.</strong>
+    Stock always <em>moves</em>. It never duplicates. If POS shows 0, the book cannot be sold —
+    even if the warehouse is full.
+  </div>
+
+  <h3>Three locations</h3>
+  <table>
+    <thead>
+      <tr><th>Location</th><th>Purpose</th><th>Typical work</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Main Warehouse</strong></td>
+        <td>Long-term storage of print runs</td>
+        <td>Receive, label cartons, store, send to Backroom</td>
+      </tr>
+      <tr>
+        <td><strong>Backroom</strong></td>
+        <td>Buffer next to the shop</td>
+        <td>Receive transfers, open cartons, put on sale</td>
+      </tr>
+      <tr>
+        <td><strong>Bookstore Floor</strong></td>
+        <td>Retail shelf stock (POS only)</td>
+        <td>Sell, return, shelf adjustments</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Cartons (boxes)</h3>
+  <p>A carton holds copies of <strong>one title</strong> and has a barcode like <span class="kbd">NPBX-PW-000042</span>.</p>
+  <table>
+    <thead><tr><th>Status (on screen)</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Full</strong></td><td>Sealed carton, not opened</td></tr>
+      <tr><td><strong>Open</strong></td><td>Partially used / remainder carton</td></tr>
+      <tr><td><strong>Empty</strong></td><td>No copies left in the carton</td></tr>
+      <tr><td><strong>In transit</strong></td><td>On a transfer between locations</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 2 -->
+<section class="section">
+  <h2>2. Roles at a glance</h2>
+  <p>Your login decides what menus you see. Ask Admin if you need a different role.</p>
+
+  <div class="role-card">
+    <strong>Cashier</strong> — Front of house<br/>
+    Dashboard (read), Books (browse), Scan, Store POS, own Account settings.
+    Cannot receive print runs, create transfers, or manage users.
+  </div>
+  <div class="role-card">
+    <strong>Warehouse</strong> (system role: admin) — Ops floor<br/>
+    Everything Cashier can do, plus Receive, Transfers, Cartons, Cycle count, Locations, Reports, Discounts, Locations setup.
+  </div>
+  <div class="role-card">
+    <strong>Admin</strong> (system role: superadmin) — Full control<br/>
+    Everything Warehouse can do, plus Staff accounts (create users, reset passwords, change roles), full analytics / audit.
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>Task</th><th>Cashier</th><th>Warehouse</th><th>Admin</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Sell books (POS)</td><td>✓</td><td>✓</td><td>✓</td></tr>
+      <tr><td>Process returns</td><td>✓</td><td>✓</td><td>✓</td></tr>
+      <tr><td>Scan cartons / put on sale*</td><td>Scan view</td><td>✓</td><td>✓</td></tr>
+      <tr><td>Receive print run</td><td>—</td><td>✓</td><td>✓</td></tr>
+      <tr><td>Send / receive transfers</td><td>—</td><td>✓</td><td>✓</td></tr>
+      <tr><td>Cycle count</td><td>—</td><td>✓</td><td>✓</td></tr>
+      <tr><td>Reports</td><td>—</td><td>✓</td><td>✓</td></tr>
+      <tr><td>Manage staff &amp; passwords</td><td>—</td><td>—</td><td>✓</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:9pt;color:#666">* Put on sale and warehouse mutations require Warehouse or Admin access.</p>
+</section>
+
+<!-- 3 -->
+<section class="section">
+  <h2>3. The big picture (stock flow)</h2>
+  <div class="flow">Printer
+   ↓  Receive (create Full + Open cartons, print labels)
+Main Warehouse
+   ↓  Transfer → Send
+Backroom
+   ↓  Transfer → Receive, then Put on sale
+Bookstore Floor
+   ↓  POS sale
+Customer</div>
+
+  <h3>Happy path (one print run)</h3>
+  <div class="steps">
+    <div class="step"><strong>Receive</strong> at Main Warehouse — choose book, total qty, copies per carton → create cartons → print labels → stick on boxes.</div>
+    <div class="step"><strong>Send</strong> cartons Main Warehouse → Backroom (scan cartons, tap Send).</div>
+    <div class="step"><strong>Receive</strong> the transfer at Backroom.</div>
+    <div class="step"><strong>Put on sale</strong> — scan carton, move N copies to Bookstore Floor.</div>
+    <div class="step"><strong>Sell</strong> on Store POS (only Bookstore Floor stock appears).</div>
+  </div>
+</section>
+
+<!-- 4 -->
+<section class="section">
+  <h2>4. Getting started</h2>
+  <h3>Sign in</h3>
+  <ol>
+    <li>Open the Nepalaya Books web app (desktop or tablet; Chrome / Safari recommended).</li>
+    <li>Enter the email and password provided by Admin.</li>
+    <li>If login fails: check Caps Lock, ask Admin to reset your password, or use “Forgot password” if enabled.</li>
+  </ol>
+  <div class="warn">
+    <strong>Camera scanning needs HTTPS</strong> (or localhost). On the phone/tablet, allow camera permission when asked.
+  </div>
+
+  <h3>Navigation</h3>
+  <ul>
+    <li><strong>Desktop:</strong> left sidebar — Dashboard, Books, Warehouse tools, Store POS, Reports, Settings.</li>
+    <li><strong>Phone/tablet:</strong> bottom tabs for the most common actions (Sell / Scan / Home, etc.).</li>
+    <li>Press <span class="kbd">?</span> anytime to reopen the in-app help guide.</li>
+  </ul>
+
+  <h3>First-time tip</h3>
+  <div class="tip">
+    Complete one small loop with a supervisor: Receive a tiny qty → Send → Receive → Put on sale → make a test sale (and void/return if needed). That teaches 90% of the product.
+  </div>
+</section>
+
+<!-- 5 CASHIER -->
+<section class="section">
+  <h2>5. Cashier guide</h2>
+  <p>Your job: serve customers quickly and keep Bookstore Floor stock accurate.</p>
+
+  <h3>5.1 Open Store POS</h3>
+  <div class="steps">
+    <div class="step">Go to <strong>Store POS</strong>.</div>
+    <div class="step">Search by title, author, or ISBN. Only books with Bookstore Floor stock are sellable.</div>
+    <div class="step">Tap a book to add it to the cart. Adjust quantity with + / −.</div>
+    <div class="step">Optional: add customer phone/name, apply discount if allowed.</div>
+    <div class="step">Tap checkout → choose payment (cash / card / eSewa / Khalti as configured) → confirm.</div>
+    <div class="step">On success, use <strong>Next sale</strong> to clear and serve the next customer. Print receipt if needed.</div>
+  </div>
+
+  <h3>5.2 Returns</h3>
+  <ol>
+    <li>In POS, open <strong>Process Return</strong>.</li>
+    <li>Search by customer phone.</li>
+    <li>Select the sale, choose quantities to return, enter a <strong>reason</strong> (required).</li>
+    <li>Confirm — stock returns to Bookstore Floor; refund amount is recorded.</li>
+  </ol>
+
+  <h3>5.3 Close shift</h3>
+  <p>Use <strong>Close shift</strong> when your shift ends. Confirm the day’s totals shown in the dialog before closing.</p>
+
+  <h3>5.4 What Cashiers should not do</h3>
+  <ul>
+    <li>Do not invent stock — if POS says out of stock, ask Warehouse to <strong>Put on sale</strong>.</li>
+    <li>Do not receive print runs or create warehouse transfers.</li>
+  </ul>
+
+  <h3>5.5 Cashier troubleshooting</h3>
+  <table>
+    <thead><tr><th>Problem</th><th>Solution</th></tr></thead>
+    <tbody>
+      <tr><td>Book missing in POS</td><td>Check Bookstore Floor stock (Books detail). Ask Warehouse to put on sale from a carton.</td></tr>
+      <tr><td>“Max stock reached”</td><td>You already have all available floor units in the cart.</td></tr>
+      <tr><td>Sale failed after payment</td><td>Do not tap Pay again with a new cart. Refresh, check if the sale appears. Contact Admin — retries are safe (idempotent).</td></tr>
+      <tr><td>Wrong price</td><td>Ask Admin/Warehouse to update the book MRP in Books → Manage.</td></tr>
+      <tr><td>Forgot password</td><td>Ask Admin → Settings → Staff accounts → Reset password or Email reset.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 6 WAREHOUSE -->
+<section class="section">
+  <h2>6. Warehouse guide</h2>
+  <p>Your job: keep cartons labeled, moves honest, and the shop floor stocked.</p>
+
+  <h3>6.1 Receive a print run</h3>
+  <p>Menu: <strong>Warehouse → Receive</strong></p>
+  <div class="steps">
+    <div class="step">Confirm location is <strong>Main Warehouse</strong> (default).</div>
+    <div class="step">Search and select the book.</div>
+    <div class="step">Enter <strong>total copies</strong> and <strong>copies per carton</strong>. Preview shows how many Full vs Open cartons will be created.</div>
+    <div class="step">Optional: batch ref, shelf, notes.</div>
+    <div class="step">Tap <strong>Receive &amp; create cartons</strong>.</div>
+    <div class="step">On success: <strong>Print labels</strong> (stick them on), or <strong>Send these cartons</strong> to open Transfers with boxes preselected, or Done.</div>
+  </div>
+  <div class="tip">Remainder copies (not a full carton) become an <strong>Open</strong> carton automatically — still label it.</div>
+
+  <h3>6.2 Send a transfer (Main → Backroom)</h3>
+  <p>Menu: <strong>Warehouse → Transfers</strong></p>
+  <div class="steps">
+    <div class="step">Tap New transfer. From = Main Warehouse, To = Backroom (defaults).</div>
+    <div class="step">Scan cartons (camera or USB/type). Remove mistakes from the list.</div>
+    <div class="step">Primary action: <strong>Send</strong> — creates the transfer and ships immediately.</div>
+    <div class="step">Use <strong>Save draft</strong> only if you must pause mid-scan.</div>
+  </div>
+  <div class="warn">After Send, cartons are <strong>In transit</strong>. Someone at the destination must <strong>Receive</strong> them.</div>
+
+  <h3>6.3 Receive a transfer</h3>
+  <ol>
+    <li>Open Transfers → find status <strong>Sent</strong>.</li>
+    <li>Confirm cartons physically arrived.</li>
+    <li>Tap <strong>Receive</strong>. Cartons now sit at the destination location.</li>
+  </ol>
+
+  <h3>6.4 Put on sale (Backroom / warehouse → Bookstore Floor)</h3>
+  <p>Menu: <strong>Scan</strong> (fastest) or Cartons / Book detail</p>
+  <div class="steps">
+    <div class="step">Open camera or type/USB-scan the carton barcode.</div>
+    <div class="step">Tap <strong>Put on sale</strong>, enter quantity (default = full remaining).</div>
+    <div class="step">Confirm. Copies move to Bookstore Floor; carton becomes Open or Empty.</div>
+    <div class="step">Scanner clears for the next carton — keep going.</div>
+  </div>
+
+  <h3>6.5 Cartons list</h3>
+  <p>Menu: <strong>Warehouse → Cartons</strong>. Default filter is <strong>All warehouses</strong>. Filter by status/location, multi-select to print labels or export.</p>
+
+  <h3>6.6 Cycle count</h3>
+  <p>Menu: <strong>Warehouse → Cycle count</strong></p>
+  <ol>
+    <li>New count → choose location and method.</li>
+    <li>Enter counted quantities.</li>
+    <li>Complete — system adjusts inventory for differences (audit recorded).</li>
+  </ol>
+  <div class="fix">Only complete a count when physical counting is finished. Cancelling discards entered counts.</div>
+
+  <h3>6.7 Shelf locations</h3>
+  <p>Define aisle/rack/bin codes, then use Scan → Set shelf (put-away) so cartons are findable.</p>
+
+  <h3>6.8 Warehouse troubleshooting</h3>
+  <table>
+    <thead><tr><th>Problem</th><th>Solution</th></tr></thead>
+    <tbody>
+      <tr><td>Carton “already in transit”</td><td>Open Transfers → Receive at destination. Do not create a second transfer for the same carton.</td></tr>
+      <tr><td>Stuck draft transfer (&gt;24h)</td><td>Dashboard warns you — open Transfers, Send or Cancel the draft.</td></tr>
+      <tr><td>Camera won’t scan</td><td>Use HTTPS; allow camera; good light; hold steady. Or type / USB wedge scanner into the box code field.</td></tr>
+      <tr><td>Shop out of stock but warehouse full</td><td>Put on sale from Backroom/Main cartons — POS only sees Bookstore Floor.</td></tr>
+      <tr><td>Label won’t print</td><td>Allow pop-ups for the site; retry Print labels from Receive success or Cartons.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 7 ADMIN -->
+<section class="section">
+  <h2>7. Admin guide</h2>
+  <p>Your job: keep people, prices, and permissions healthy — and unblock the team.</p>
+
+  <h3>7.1 Staff accounts</h3>
+  <p>Menu: <strong>Settings → Staff accounts</strong></p>
+  <ul>
+    <li><strong>Add user</strong> — name, email, temporary password, role (Cashier / Warehouse / Admin).</li>
+    <li><strong>Reset password</strong> — set a temp password; share securely (shown only once in the dialog).</li>
+    <li><strong>Email</strong> — send a password reset email when email auth is configured.</li>
+    <li><strong>Change role</strong> — promote/demote staff.</li>
+    <li><strong>Activate / Deactivate</strong> — deactivated users cannot sign in.</li>
+  </ul>
+  <div class="warn">Never reset or deactivate your own Admin account without another Admin available.</div>
+
+  <h3>7.2 Books catalog</h3>
+  <p><strong>Books → Manage</strong> — create/edit titles, MRP, cost, ISBN, min stock alerts. Soft-delete carefully.</p>
+
+  <h3>7.3 Discounts &amp; locations</h3>
+  <ul>
+    <li>Settings → Discounts — store rules for POS.</li>
+    <li>Settings → Locations setup — Main Warehouse / Backroom / Bookstore Floor.</li>
+    <li>Warehouse → Locations — shelf bins.</li>
+  </ul>
+
+  <h3>7.4 Reports &amp; audit</h3>
+  <ul>
+    <li><strong>Reports</strong> — sales, inventory value, low stock, warehouse activity.</li>
+    <li><strong>Staff accounts → Analytics / Sales / Audit</strong> — deeper history, voids, who did what.</li>
+  </ul>
+
+  <h3>7.5 Voiding a sale</h3>
+  <p>From Admin sales tools: void with a written reason. Voided sales should not remain in revenue totals.</p>
+
+  <h3>7.6 Admin troubleshooting</h3>
+  <table>
+    <thead><tr><th>Problem</th><th>Solution</th></tr></thead>
+    <tbody>
+      <tr><td>Staff locked out</td><td>Reset password or reactivate profile.</td></tr>
+      <tr><td>“You don’t have access”</td><td>Wrong role — change role or open the correct menu.</td></tr>
+      <tr><td>Preview/login white screen</td><td>Ensure Vercel has Supabase env vars; hard-refresh.</td></tr>
+      <tr><td>Numbers look wrong after a bad receive</td><td>Use cycle count or supervised stock adjustment; check audit log.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 8 FEATURES -->
+<section class="section">
+  <h2>8. Feature reference</h2>
+  <table>
+    <thead><tr><th>Screen</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td>Dashboard</td><td>Today’s sales, pending transfers, low floor stock, stuck drafts, next actions</td></tr>
+      <tr><td>Books</td><td>Catalog hub; open a title for stock by location, cartons, history</td></tr>
+      <tr><td>Receive</td><td>Create cartons from a print run; print labels; jump to Send</td></tr>
+      <tr><td>Transfers</td><td>Send / Receive carton moves between locations</td></tr>
+      <tr><td>Cartons</td><td>Search/filter all boxes; print; put on sale</td></tr>
+      <tr><td>Scan</td><td>Camera/USB barcode → put on sale, send, set shelf, print</td></tr>
+      <tr><td>Cycle count</td><td>Physical count vs system; apply adjustments</td></tr>
+      <tr><td>Store POS</td><td>Sell, return, shift close</td></tr>
+      <tr><td>Reports</td><td>Inventory &amp; sales reporting for managers</td></tr>
+      <tr><td>Settings</td><td>Account, discounts, staff, locations</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 9 CHECKLISTS -->
+<section class="section">
+  <h2>9. Daily / weekly checklists</h2>
+  <h3>Opening (Cashier)</h3>
+  <ul>
+    <li>□ Sign in</li>
+    <li>□ Confirm POS loads and a few titles show stock</li>
+    <li>□ If shelves look empty, ping Warehouse before the rush</li>
+  </ul>
+  <h3>During the day (Warehouse)</h3>
+  <ul>
+    <li>□ Clear any <strong>Sent</strong> transfers waiting to Receive</li>
+    <li>□ Put on sale enough copies for the floor</li>
+    <li>□ Receive any new print runs and label cartons the same day</li>
+  </ul>
+  <h3>Closing (Cashier)</h3>
+  <ul>
+    <li>□ Close shift with confirmed totals</li>
+    <li>□ Sign out on shared tablets</li>
+  </ul>
+  <h3>Weekly (Admin / Warehouse)</h3>
+  <ul>
+    <li>□ Review low-stock and reprint candidates in Reports</li>
+    <li>□ Spot-check cycle count on one shelf or one title</li>
+    <li>□ Deactivate former staff accounts</li>
+  </ul>
+</section>
+
+<!-- 10 TROUBLESHOOT -->
+<section class="section">
+  <h2>10. Troubleshooting &amp; solutions</h2>
+  <h3>Login &amp; access</h3>
+  <table>
+    <thead><tr><th>Symptom</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td>Incorrect email/password</td><td>Retry carefully; Admin reset password</td></tr>
+      <tr><td>Account deactivated</td><td>Admin must reactivate</td></tr>
+      <tr><td>Redirected from a page</td><td>Role lacks permission — toast explains</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Scanning</h3>
+  <table>
+    <thead><tr><th>Symptom</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td>Camera permission denied</td><td>Site settings → Allow camera → Try again</td></tr>
+      <tr><td>Won’t decode</td><td>Better light, fill the frame, clean lens; or type the code</td></tr>
+      <tr><td>“No box found”</td><td>Confirm label matches system barcode; check Cartons list</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Stock &amp; sales</h3>
+  <table>
+    <thead><tr><th>Symptom</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td>Insufficient stock error</td><td>Refresh; verify location qty; don’t force negative stock</td></tr>
+      <tr><td>Double-tap created one sale only</td><td>Expected — system uses request IDs to prevent doubles</td></tr>
+      <tr><td>Return rejected</td><td>Reason required; sale may already be fully returned</td></tr>
+    </tbody>
+  </table>
+
+  <h3>If something goes wrong mid-flow</h3>
+  <div class="fix">
+    <strong>Stop and check status</strong> before repeating the action.
+    Carton already Sent → Receive it. Sale maybe recorded → check Sales / Reports.
+    Repeating a finished step often fails with a clear message — read it.
+  </div>
+</section>
+
+<!-- 11 GLOSSARY -->
+<section class="section">
+  <h2>11. Glossary</h2>
+  <table>
+    <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td>Carton / Box</td><td>Physical package of one title with a barcode</td></tr>
+      <tr><td>Put on sale</td><td>Move copies from a carton location onto Bookstore Floor</td></tr>
+      <tr><td>Send</td><td>Ship a transfer (cartons leave source, status In transit)</td></tr>
+      <tr><td>Receive (transfer)</td><td>Accept in-transit cartons at destination</td></tr>
+      <tr><td>Receive (print run)</td><td>Create new cartons when books arrive from the printer</td></tr>
+      <tr><td>Bookstore Floor</td><td>Only stock POS can sell</td></tr>
+      <tr><td>MRP</td><td>Maximum retail price / selling price on the book</td></tr>
+      <tr><td>Cycle count</td><td>Physical inventory count reconciled to the system</td></tr>
+      <tr><td>Audit log</td><td>Who did what, when (Admin can review)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 12 SHORTCUTS -->
+<section class="section">
+  <h2>12. Keyboard shortcuts (desktop)</h2>
+  <table>
+    <thead><tr><th>Keys</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td><span class="kbd">?</span></td><td>Open help guide</td></tr>
+      <tr><td><span class="kbd">G</span> then <span class="kbd">H</span></td><td>Dashboard</td></tr>
+      <tr><td><span class="kbd">G</span> then <span class="kbd">B</span></td><td>Books</td></tr>
+      <tr><td><span class="kbd">G</span> then <span class="kbd">S</span></td><td>Scan</td></tr>
+      <tr><td><span class="kbd">G</span> then <span class="kbd">R</span></td><td>Receive</td></tr>
+      <tr><td><span class="kbd">G</span> then <span class="kbd">M</span></td><td>Transfers</td></tr>
+      <tr><td><span class="kbd">G</span> then <span class="kbd">P</span></td><td>Store POS</td></tr>
+      <tr><td><span class="kbd">Esc</span></td><td>Close camera / modals</td></tr>
+    </tbody>
+  </table>
+
+  <footer class="note">
+    Nepalaya Books — Publishing operations for Nepalaya Publication.<br/>
+    For access or password help, contact your Admin. Keep shared tablets signed out after shifts.
+  </footer>
+</section>
+
+</body>
+</html>
