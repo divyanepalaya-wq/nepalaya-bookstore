@@ -25,7 +25,7 @@ export default function BookDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { appUser } = useAuth()
-  const { books, loading: booksLoading } = useBooks()
+  const { books, loading: booksLoading, patchBook } = useBooks()
   const {
     getRetailStock, getWarehouseStock,
     primaryWarehouse, bufferWarehouse, bookstoreId,
@@ -274,7 +274,10 @@ export default function BookDetail() {
         open={enrichOpen}
         book={book}
         onClose={() => setEnrichOpen(false)}
-        onSaved={() => setReloadKey((k) => k + 1)}
+        onSaved={(patch) => {
+          patchBook(book.id, patch)
+          setReloadKey((k) => k + 1)
+        }}
       />
     </div>
   )

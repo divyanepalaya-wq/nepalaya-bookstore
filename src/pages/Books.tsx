@@ -1,13 +1,13 @@
-import { useMemo, useState } from 'react'
+import { startTransition, useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Search, BookOpen, Plus, Pencil, Trash2, Sparkles } from 'lucide-react'
+import { Search, BookOpen, Plus, Pencil, Trash2, Sparkles, ChevronLeft, ChevronRight } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useBooks } from '@/contexts/BooksContext'
 import { useWarehouse } from '@/contexts/WarehouseContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { canWarehouse, isFullAdmin } from '@/lib/roles'
-import { CATEGORY_OPTIONS, categoryLabel } from '@/lib/bookCategories'
+import { CATEGORY_OPTIONS, categoryLabel, isNepalaya, isThirdParty } from '@/lib/bookCategories'
 import type { Book, BookType } from '@/types'
 import { cn } from '@/lib/utils'
 import { Input } from '@/components/ui/Input'
@@ -19,13 +19,16 @@ import { PageSpinner } from '@/components/ui/Spinner'
 import { BookEnrichModal } from '@/components/BookEnrichModal'
 
 const CATEGORIES = CATEGORY_OPTIONS
+const PAGE_SIZE = 25
 
 export default function Books() {
   const { appUser } = useAuth()
-  const { books, loading } = useBooks()
+  const { books, loading, patchBook, refreshBooks } = useBooks()
   const { getRetailStock, getWarehouseStock, primaryWarehouse, bufferWarehouse } = useWarehouse()
   const [search, setSearch] = useState('')
+  const deferredSearch = useDeferredValue(search)
   const [catFilter, setCatFilter] = useState<'' | BookType>('')
+  const [page, setPage] = useState(1)
   const [modal, setModal] = useState<'add' | 'edit' | null>(null)
   const [editing, setEditing] = useState<Book | null>(null)
   const [name, setName] = useState('')
@@ -38,7 +41,7 @@ export default function Books() {
   const canEdit = canWarehouse(appUser?.role) || isFullAdmin(appUser?.role)
 
   const rows = useMemo(() => {
-    const q = search.trim().toLowerCase()
+    const q = deferredSearch.trim().toLowerCase()
     return books
       .filter((b) => !catFilter || b.language === catFilter)
       .filter((b) => {
@@ -56,7 +59,38 @@ export default function Books() {
         return { book: b, store, main, back, total: store + main + back }
       })
       .sort((a, b) => a.book.name.localeCompare(b.book.name))
-  }, [books, search, catFilter, getRetailStock, getWarehouseStock, primaryWarehouse, bufferWarehouse])
+  }, [books, deferredSearch, catFilter, getRetailStock, getWarehouseStock, primaryWarehouse, bufferWarehouse])
+
+  const cards = useMemo(() => {
+    let withCover = 0
+    let withStock = 0
+    let nepalaya = 0
+    let third = 0
+    for (const b of books) {
+      if (b.coverUrl) withCover += 1
+      if (isNepalaya(b)) nepalaya += 1
+      if (isThirdParty(b)) third += 1
+    }
+    for (const r of rows) {
+      if (r.total > 0) withStock += 1
+    }
+    return {
+      total: books.length,
+      shown: rows.length,
+      withCover,
+      withStock,
+      nepalaya,
+      third,
+    }
+  }, [books, rows])
+
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
+  const pageSafe = Math.min(page, pageCount)
+  const pageRows = rows.slice((pageSafe - 1) * PAGE_SIZE, pageSafe * PAGE_SIZE)
+
+  useEffect(() => {
+    setPage(1)
+  }, [deferredSearch, catFilter])
 
   const openAdd = () => {
     setEditing(null)
@@ -100,6 +134,7 @@ export default function Books() {
         })
         if (error) throw error
         toast.success('Book added')
+        await refreshBooks()
       } else if (editing) {
         const { error } = await supabase
           .from('books')
@@ -112,6 +147,12 @@ export default function Books() {
           })
           .eq('id', editing.id)
         if (error) throw error
+        patchBook(editing.id, {
+          name: name.trim(),
+          author: author.trim() || undefined,
+          language,
+          mrp: Number(mrp) || 0,
+        })
         toast.success('Saved')
       }
       setModal(null)
@@ -129,7 +170,10 @@ export default function Books() {
       .update({ is_deleted: true, deleted_at: new Date().toISOString(), deleted_by: appUser?.uid ?? null })
       .eq('id', b.id)
     if (error) toast.error(error.message)
-    else toast.success('Removed')
+    else {
+      toast.success('Removed')
+      await refreshBooks()
+    }
   }
 
   if (loading) return <PageSpinner />
@@ -142,9 +186,7 @@ export default function Books() {
             <BookOpen className="h-7 w-7 text-accent-600" />
             Books
           </h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Catalog · Nepalaya / Nepali / English · {rows.length} shown
-          </p>
+          <p className="text-sm text-gray-500 mt-0.5">Catalog · covers · ISBN</p>
         </div>
         {canEdit && (
           <Button size="lg" className="min-h-11" onClick={openAdd}>
@@ -153,13 +195,30 @@ export default function Books() {
         )}
       </div>
 
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {[
+          { label: 'Titles', value: cards.total },
+          { label: 'With cover', value: cards.withCover },
+          { label: 'Nepalaya', value: cards.nepalaya },
+          { label: 'Nepali / Eng', value: cards.third },
+        ].map((c) => (
+          <div key={c.label} className="rounded-2xl border border-gray-200 bg-white p-3 text-center">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{c.label}</p>
+            <p className="text-xl font-bold tabular-nums text-gray-900 mt-1">{c.value}</p>
+          </div>
+        ))}
+      </div>
+
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
         <Input
           className="pl-11 min-h-12 text-base"
-          placeholder="Search…"
+          placeholder="Search title, author, ISBN…"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => {
+            const v = e.target.value
+            setSearch(v)
+          }}
         />
       </div>
 
@@ -168,7 +227,7 @@ export default function Books() {
           <button
             key={f.label}
             type="button"
-            onClick={() => setCatFilter(f.value)}
+            onClick={() => startTransition(() => setCatFilter(f.value))}
             className={cn(
               'rounded-full px-4 py-2 text-sm font-semibold border min-h-10',
               catFilter === f.value
@@ -182,15 +241,30 @@ export default function Books() {
       </div>
 
       <ul className="rounded-2xl border border-gray-200 bg-white divide-y divide-gray-100">
-        {rows.map(({ book, store, main, back }) => (
+        {pageRows.map(({ book, store, main, back }) => (
           <li key={book.id} className="flex items-center gap-2 px-3 py-3">
-            <Link to={`/books/${book.id}`} className="min-w-0 flex-1 hover:opacity-80">
-              <p className="font-semibold text-gray-900 line-clamp-1">{book.name}</p>
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                <Badge variant="gray">{categoryLabel(book.language)}</Badge>
-                <span className="text-xs text-gray-400">
-                  Shelf {store} · Back {back} · WH {main}
-                </span>
+            <Link to={`/books/${book.id}`} className="flex min-w-0 flex-1 items-center gap-3 hover:opacity-80">
+              {book.coverUrl ? (
+                <img
+                  src={book.coverUrl}
+                  alt=""
+                  className="h-14 w-10 rounded object-cover shrink-0 bg-gray-100 border border-gray-100"
+                  loading="lazy"
+                />
+              ) : (
+                <div className="h-14 w-10 rounded bg-gray-100 shrink-0 flex items-center justify-center border border-gray-100">
+                  <BookOpen className="h-4 w-4 text-gray-300" />
+                </div>
+              )}
+              <div className="min-w-0">
+                <p className="font-semibold text-gray-900 line-clamp-1">{book.name}</p>
+                <p className="text-xs text-gray-500 line-clamp-1">{book.author || '—'}</p>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <Badge variant="gray">{categoryLabel(book.language)}</Badge>
+                  <span className="text-xs text-gray-400">
+                    Shelf {store} · Back {back} · WH {main}
+                  </span>
+                </div>
               </div>
             </Link>
             {canEdit && (
@@ -208,10 +282,40 @@ export default function Books() {
             )}
           </li>
         ))}
-        {rows.length === 0 && (
+        {pageRows.length === 0 && (
           <li className="px-4 py-10 text-center text-gray-400">No books</li>
         )}
       </ul>
+
+      {rows.length > PAGE_SIZE && (
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm text-gray-500">
+            {(pageSafe - 1) * PAGE_SIZE + 1}–{Math.min(pageSafe * PAGE_SIZE, rows.length)} of {rows.length}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="min-h-10"
+              disabled={pageSafe <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              <ChevronLeft className="h-4 w-4" /> Prev
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="min-h-10"
+              disabled={pageSafe >= pageCount}
+              onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+            >
+              Next <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
 
       <Modal
         open={modal !== null}
@@ -252,6 +356,10 @@ export default function Books() {
           open={!!enrichBook}
           book={enrichBook}
           onClose={() => setEnrichBook(null)}
+          onSaved={(patch) => {
+            patchBook(enrichBook.id, patch)
+            setEnrichBook(null)
+          }}
         />
       )}
     </div>

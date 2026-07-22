@@ -1,20 +1,21 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
   Inbox, Send, ShoppingCart, HelpCircle, BookOpen, Boxes,
-  ChevronRight, Keyboard, Package, Store, Warehouse,
+  ChevronRight, Keyboard, Package, Store, Warehouse, LayoutDashboard,
+  RotateCcw, Sparkles, Users,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/utils'
 
-const GUIDE_SEEN_KEY = 'nepalaya-guide-seen-v5'
+const GUIDE_SEEN_KEY = 'nepalaya-guide-seen-v6'
 
 const FLOW_STEPS = [
   {
     n: 1,
-            title: 'Stock in',
-    body: 'Nepalaya into warehouse cartons. Nepali / English straight to shelf.',
+    title: 'Stock in',
+    body: 'Nepalaya → warehouse cartons. Nepali / English → shelf only (pick a vendor).',
     action: '/receive',
     actionLabel: 'Stock in',
     icon: Inbox,
@@ -22,7 +23,7 @@ const FLOW_STEPS = [
   {
     n: 2,
     title: 'Send',
-    body: 'Scan a carton → backroom (whole) or store shelf (pieces). One place for move + scan.',
+    body: 'Scan a carton barcode → whole carton to backroom, or pieces to the store shelf.',
     action: '/send',
     actionLabel: 'Send',
     icon: Send,
@@ -30,7 +31,7 @@ const FLOW_STEPS = [
   {
     n: 3,
     title: 'Sell',
-    body: 'Search → cart → pay. Stock comes from the store shelf only.',
+    body: 'Shelf stock only. Search or pick a book → cart → pay.',
     action: '/sell',
     actionLabel: 'Sell',
     icon: ShoppingCart,
@@ -40,12 +41,13 @@ const FLOW_STEPS = [
 const SHORTCUTS = [
   { keys: '?', desc: 'Open this help' },
   { keys: '[', desc: 'Collapse sidebar' },
-  { keys: 'G then R', desc: 'Receive' },
+  { keys: 'G then H', desc: 'Overview' },
+  { keys: 'G then R', desc: 'Stock in' },
   { keys: 'G then N', desc: 'Send' },
   { keys: 'G then P', desc: 'Sell' },
   { keys: 'G then B', desc: 'Books' },
   { keys: 'G then C', desc: 'Cartons' },
-  { keys: 'Esc', desc: 'Close modals' },
+  { keys: 'Esc', desc: 'Close modals / menus' },
 ]
 
 interface WorkflowGuideProps {
@@ -55,7 +57,7 @@ interface WorkflowGuideProps {
 
 export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
   const navigate = useNavigate()
-  const [tab, setTab] = useState<'flow' | 'roles' | 'keys' | 'help'>('flow')
+  const [tab, setTab] = useState<'flow' | 'look' | 'roles' | 'keys' | 'help'>('flow')
 
   const go = (path: string) => {
     navigate(path)
@@ -63,11 +65,12 @@ export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="How stock moves" size="lg">
+    <Modal open={open} onClose={onClose} title="Help" size="lg">
       <div className="space-y-4">
-        <div className="flex gap-1 p-1 bg-gray-100 rounded-lg">
+        <div className="flex gap-1 p-1 bg-gray-100 rounded-lg overflow-x-auto">
           {([
             { id: 'flow' as const, label: 'Flow' },
+            { id: 'look' as const, label: 'Find' },
             { id: 'roles' as const, label: 'Who' },
             { id: 'keys' as const, label: 'Keys' },
             { id: 'help' as const, label: 'Stuck?' },
@@ -77,7 +80,7 @@ export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
               type="button"
               onClick={() => setTab(t.id)}
               className={cn(
-                'flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors',
+                'shrink-0 rounded-md px-3 py-2 text-xs font-semibold transition-colors',
                 tab === t.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700',
               )}
             >
@@ -89,7 +92,7 @@ export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
         {tab === 'flow' && (
           <div className="space-y-3">
             <p className="text-sm text-gray-600">
-              Stock in · Send · Sell. Books and Cartons for looking things up.
+              Everyday path: <strong>Stock in → Send → Sell</strong>. Overview shows totals at a glance.
             </p>
 
             <div className="flex flex-wrap items-center justify-center gap-1 sm:gap-2 py-3 px-2 rounded-xl bg-gradient-to-r from-blue-50 via-orange-50 to-green-50 border border-gray-100">
@@ -128,11 +131,47 @@ export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
               ))}
             </ol>
 
-            <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-xs text-amber-800 flex gap-2">
-              <Package className="h-4 w-4 shrink-0 mt-0.5" />
-              <span>
-                <strong>Books</strong> = catalog (add / edit / remove). <strong>Cartons</strong> = Nepalaya warehouse sheet.
-              </span>
+            <button
+              type="button"
+              onClick={() => go('/overview')}
+              className="w-full flex items-center gap-3 rounded-xl border border-gray-100 bg-white p-3 text-left hover:bg-gray-50"
+            >
+              <LayoutDashboard className="h-5 w-5 text-accent-600 shrink-0" />
+              <div>
+                <p className="font-semibold text-sm text-gray-900">Overview</p>
+                <p className="text-xs text-gray-500">Cartons, warehouse, backroom, and shelf totals.</p>
+              </div>
+            </button>
+          </div>
+        )}
+
+        {tab === 'look' && (
+          <div className="space-y-3">
+            <div className="rounded-xl border border-gray-100 bg-white p-4 space-y-2">
+              <p className="font-semibold text-gray-900 text-sm flex items-center gap-2">
+                <BookOpen className="h-4 w-4 text-accent-600" /> Books
+              </p>
+              <p className="text-xs text-gray-600 leading-relaxed">
+                Catalog of every title. Tap the sparkle to match ISBN and pull a cover photo — the list updates right away.
+              </p>
+              <Button size="sm" variant="outline" onClick={() => go('/books')}>Open Books</Button>
+            </div>
+            <div className="rounded-xl border border-gray-100 bg-white p-4 space-y-2">
+              <p className="font-semibold text-gray-900 text-sm flex items-center gap-2">
+                <Boxes className="h-4 w-4 text-accent-600" /> Cartons
+              </p>
+              <p className="text-xs text-gray-600 leading-relaxed">
+                Nepalaya warehouse sheet: how many cartons and pieces per title. Export to Excel if needed.
+              </p>
+              <Button size="sm" variant="outline" onClick={() => go('/cartons')}>Open Cartons</Button>
+            </div>
+            <div className="rounded-xl border border-amber-100 bg-amber-50/60 p-4 space-y-2">
+              <p className="font-semibold text-amber-950 text-sm flex items-center gap-2">
+                <Sparkles className="h-4 w-4" /> Cover / ISBN missing?
+              </p>
+              <p className="text-xs text-amber-900 leading-relaxed">
+                On Books, open a title → sparkle → search by ISBN or title → accept cover. No hard refresh needed.
+              </p>
             </div>
           </div>
         )}
@@ -141,10 +180,10 @@ export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
           <div className="space-y-3">
             <div className="rounded-xl border border-green-100 bg-green-50/50 p-4">
               <p className="font-semibold text-green-900 text-sm flex items-center gap-2">
-                <Store className="h-4 w-4" /> Store · receptionist
+                <Store className="h-4 w-4" /> Cashier / receptionist
               </p>
               <p className="text-xs text-green-800 mt-1 leading-relaxed">
-                Receive vendor books · Sell · Books. Log: “X book came from vendor → bookstore.”
+                Sell · vendor stock in (Nepali/English) · browse Books.
               </p>
             </div>
             <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
@@ -152,20 +191,16 @@ export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
                 <Warehouse className="h-4 w-4" /> Warehouse
               </p>
               <p className="text-xs text-blue-800 mt-1 leading-relaxed">
-                Receive Nepalaya cartons · Send to backroom or shelf · Cartons sheet.
+                Nepalaya carton receive · Send · Cartons sheet · Fix mistaken stock.
               </p>
             </div>
             <div className="rounded-xl border border-gray-200 bg-gray-50/50 p-4">
               <p className="font-semibold text-gray-900 text-sm flex items-center gap-2">
-                <BookOpen className="h-4 w-4" /> Admin
+                <Users className="h-4 w-4" /> Admin / superadmin
               </p>
               <p className="text-xs text-gray-600 mt-1 leading-relaxed">
-                Everything · staff · discounts · locations in Settings.
+                Everything · staff · vendors · discounts · locations in Settings.
               </p>
-            </div>
-            <div className="rounded-lg border border-gray-100 px-3 py-2 text-xs text-gray-600 flex gap-2">
-              <Boxes className="h-4 w-4 shrink-0 mt-0.5 text-accent-600" />
-              Tip: press <kbd className="px-1.5 py-0.5 rounded bg-gray-100 font-mono text-[10px]">?</kbd> anytime for this guide.
             </div>
           </div>
         )}
@@ -191,21 +226,38 @@ export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
         {tab === 'help' && (
           <div className="space-y-3 text-sm text-gray-700">
             <div className="rounded-lg border border-gray-100 px-3 py-2.5">
+              <p className="font-semibold text-gray-900 flex items-center gap-2">
+                <RotateCcw className="h-4 w-4 text-accent-600" /> Wrong receive / put on sale?
+              </p>
+              <p className="text-xs text-gray-600 mt-1">
+                Open <strong>Fix stock</strong> (Settings or warehouse menu). Undo the latest mistake first — put-on-sale before voiding a carton receive. Already-undone rows show a badge, not Undo.
+              </p>
+              <Button size="sm" variant="outline" className="mt-2" onClick={() => go('/fix')}>
+                Fix stock
+              </Button>
+            </div>
+            <div className="rounded-lg border border-gray-100 px-3 py-2.5">
               <p className="font-semibold text-gray-900">Move vs Scan?</p>
               <p className="text-xs text-gray-600 mt-1">
-                Same job — both are now <strong>Send</strong>. Scan the carton, then choose backroom or shelf.
+                Same job — both are <strong>Send</strong>. Scan the carton, then choose backroom or shelf.
               </p>
             </div>
             <div className="rounded-lg border border-gray-100 px-3 py-2.5">
               <p className="font-semibold text-gray-900">Carton stuck in transit</p>
               <p className="text-xs text-gray-600 mt-1">
-                Open Send, scan again, or ask admin to check the transfer.
+                Open Send and scan again, or ask admin to check the transfer.
               </p>
             </div>
             <div className="rounded-lg border border-gray-100 px-3 py-2.5">
               <p className="font-semibold text-gray-900">Sale failed after pay</p>
               <p className="text-xs text-gray-600 mt-1">
                 Don’t tap Pay again. Refresh Sell and check if the sale landed. Retries reuse the same request so stock won’t double.
+              </p>
+            </div>
+            <div className="rounded-lg border border-gray-100 px-3 py-2.5 flex gap-2">
+              <Package className="h-4 w-4 shrink-0 mt-0.5 text-accent-600" />
+              <p className="text-xs text-gray-600">
+                Press <kbd className="px-1.5 py-0.5 rounded bg-gray-100 font-mono text-[10px]">?</kbd> anytime to reopen this guide.
               </p>
             </div>
           </div>

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Search, Boxes, PackagePlus, Download } from 'lucide-react'
+import { Search, Boxes, PackagePlus, Download, ChevronLeft, ChevronRight } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { mapBox } from '@/lib/mappers'
 import { fetchAllPages } from '@/lib/fetchAll'
@@ -36,6 +36,10 @@ export default function CartonSheet() {
   const [boxes, setBoxes] = useState<(Box & { id: string })[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const deferredSearch = useDeferredValue(search)
+  const [page, setPage] = useState(1)
+
+  const PAGE_SIZE = 30
 
   const primaryId = primaryWarehouse?.id ?? 'wh-primary'
   const bufferId = bufferWarehouse?.id ?? 'wh-buffer'
@@ -50,7 +54,7 @@ export default function CartonSheet() {
         const rows = await fetchAllPages<Record<string, unknown>>(async (from, to) => {
           const res = await supabase
             .from('boxes')
-            .select('*')
+            .select('id,barcode,book_id,book_name,warehouse_id,quantity,initial_quantity,status,is_deleted,created_at')
             .neq('status', 'empty')
             .order('created_at', { ascending: true })
             .range(from, to)
@@ -133,22 +137,34 @@ export default function CartonSheet() {
       })
     }
 
-    const q = search.trim().toLowerCase()
+    const q = deferredSearch.trim().toLowerCase()
     return out
       .filter((r) => r.total > 0 || r.boxes > 0)
       .filter((r) => !q || r.name.toLowerCase().includes(q) || r.author.toLowerCase().includes(q))
       .sort((a, b) => a.name.localeCompare(b.name))
-  }, [boxes, books, bookById, search, getWarehouseStock, primaryId, bufferId])
+  }, [boxes, books, bookById, deferredSearch, getWarehouseStock, primaryId, bufferId])
 
   const totals = useMemo(() => {
     let boxesN = 0
     let pcs = 0
+    let wh = 0
+    let br = 0
     for (const r of rows) {
       boxesN += r.boxes
       pcs += r.total
+      wh += r.whPcs
+      br += r.brPcs
     }
-    return { boxesN, pcs, titles: rows.length }
+    return { boxesN, pcs, titles: rows.length, wh, br }
   }, [rows])
+
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
+  const pageSafe = Math.min(page, pageCount)
+  const pageRows = rows.slice((pageSafe - 1) * PAGE_SIZE, pageSafe * PAGE_SIZE)
+
+  useEffect(() => {
+    setPage(1)
+  }, [deferredSearch])
 
   const exportExcel = () => {
     downloadCSV(
@@ -187,17 +203,22 @@ export default function CartonSheet() {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {[
           { label: 'Titles', value: totals.titles },
           { label: 'Cartons', value: totals.boxesN.toLocaleString() },
-          { label: 'Pieces', value: totals.pcs.toLocaleString() },
+          { label: 'Warehouse', value: totals.wh.toLocaleString() },
+          { label: 'Backroom', value: totals.br.toLocaleString() },
         ].map((c) => (
-          <div key={c.label} className="rounded-2xl border border-gray-200 bg-white p-4 text-center">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">{c.label}</p>
-            <p className="text-2xl font-bold tabular-nums text-gray-900 mt-1">{c.value}</p>
+          <div key={c.label} className="rounded-2xl border border-gray-200 bg-white p-3 text-center">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{c.label}</p>
+            <p className="text-xl font-bold tabular-nums text-gray-900 mt-1">{c.value}</p>
           </div>
         ))}
+      </div>
+
+      <div className="rounded-2xl border border-accent-100 bg-accent-50/50 px-4 py-3 text-sm text-accent-900">
+        Total pieces: <strong className="tabular-nums">{totals.pcs.toLocaleString()}</strong>
       </div>
 
       <div className="relative">
@@ -223,7 +244,7 @@ export default function CartonSheet() {
               No carton stock yet. Tap Stock in.
             </li>
           )}
-          {rows.map((r) => (
+          {pageRows.map((r) => (
             <li key={r.bookId}>
               <button
                 type="button"
@@ -259,6 +280,36 @@ export default function CartonSheet() {
           ))}
         </ul>
       </div>
+
+      {rows.length > PAGE_SIZE && (
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm text-gray-500">
+            {(pageSafe - 1) * PAGE_SIZE + 1}–{Math.min(pageSafe * PAGE_SIZE, rows.length)} of {rows.length}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="min-h-10"
+              disabled={pageSafe <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              <ChevronLeft className="h-4 w-4" /> Prev
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="min-h-10"
+              disabled={pageSafe >= pageCount}
+              onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+            >
+              Next <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

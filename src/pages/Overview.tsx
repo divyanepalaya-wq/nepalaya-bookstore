@@ -30,7 +30,7 @@ export default function Overview() {
         const rows = await fetchAllPages<Record<string, unknown>>(async (from, to) => {
           const res = await supabase
             .from('boxes')
-            .select('*')
+            .select('id,barcode,book_id,book_name,warehouse_id,quantity,initial_quantity,status,is_deleted,created_at')
             .neq('status', 'empty')
             .order('created_at', { ascending: true })
             .range(from, to)
@@ -58,9 +58,11 @@ export default function Overview() {
     let thirdTitles = 0
     let shelfTitles = 0
 
+    const booksWithCartons = new Set<string>()
     for (const b of boxes) {
       cartons += 1
       cartonPcs += b.quantity
+      booksWithCartons.add(b.bookId)
     }
 
     for (const book of books) {
@@ -70,7 +72,7 @@ export default function Overview() {
       whPcs += main
       backPcs += back
       shelfPcs += shelf
-      if (isNepalaya(book) && (main + back + shelf > 0 || boxes.some((x) => x.bookId === book.id))) {
+      if (isNepalaya(book) && (main + back + shelf > 0 || booksWithCartons.has(book.id))) {
         nepalayaTitles += 1
       }
       if (isThirdParty(book) && shelf > 0) thirdTitles += 1

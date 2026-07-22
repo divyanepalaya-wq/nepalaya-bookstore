@@ -12,19 +12,19 @@ import { PageSpinner } from '@/components/ui/Spinner'
 import { isSupabaseConfigured } from '@/lib/supabase'
 import Login from '@/pages/Login'
 import HomeRedirect from '@/pages/HomeRedirect'
-import Overview from '@/pages/Overview'
-import ReceiveHub from '@/pages/ReceiveHub'
-import AddStock from '@/pages/AddStock'
-import VendorReceive from '@/pages/VendorReceive'
-import SendPage from '@/pages/SendPage'
-import CartonSheet from '@/pages/CartonSheet'
-import Books from '@/pages/Books'
-import BookDetail from '@/pages/BookDetail'
-import FixStock from '@/pages/FixStock'
-import Vendors from '@/pages/Vendors'
 import Settings from '@/pages/Settings'
 import AccountSettings from '@/pages/AccountSettings'
 
+const Overview = lazy(() => import('@/pages/Overview'))
+const ReceiveHub = lazy(() => import('@/pages/ReceiveHub'))
+const AddStock = lazy(() => import('@/pages/AddStock'))
+const VendorReceive = lazy(() => import('@/pages/VendorReceive'))
+const SendPage = lazy(() => import('@/pages/SendPage'))
+const CartonSheet = lazy(() => import('@/pages/CartonSheet'))
+const Books = lazy(() => import('@/pages/Books'))
+const BookDetail = lazy(() => import('@/pages/BookDetail'))
+const FixStock = lazy(() => import('@/pages/FixStock'))
+const Vendors = lazy(() => import('@/pages/Vendors'))
 const POS = lazy(() => import('@/pages/POS'))
 const Discounts = lazy(() => import('@/pages/Discounts'))
 const SuperAdmin = lazy(() => import('@/pages/SuperAdmin'))
@@ -33,9 +33,11 @@ const Warehouses = lazy(() => import('@/pages/Warehouses'))
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 30_000,
-      retry: 2,
+      staleTime: 60_000,
+      gcTime: 10 * 60_000,
+      retry: 1,
       refetchOnWindowFocus: false,
+      refetchOnReconnect: true,
     },
   },
 })
@@ -78,23 +80,23 @@ function App() {
                     }
                   >
                     <Route index element={<HomeRedirect />} />
-                    <Route path="overview" element={<Overview />} />
+                    <Route path="overview" element={<Lazy><Overview /></Lazy>} />
 
-                    <Route path="receive" element={<ReceiveHub />} />
+                    <Route path="receive" element={<Lazy><ReceiveHub /></Lazy>} />
                     <Route path="receive/warehouse" element={
                       <ProtectedRoute allowedRoles={['superadmin', 'admin', 'warehouse']}>
-                        <AddStock />
+                        <Lazy><AddStock /></Lazy>
                       </ProtectedRoute>
                     } />
                     <Route path="receive/vendor" element={
                       <ProtectedRoute allowedRoles={['superadmin', 'admin', 'warehouse', 'receptionist']}>
-                        <VendorReceive />
+                        <Lazy><VendorReceive /></Lazy>
                       </ProtectedRoute>
                     } />
 
                     <Route path="send" element={
                       <ProtectedRoute allowedRoles={['superadmin', 'admin', 'warehouse']}>
-                        <SendPage />
+                        <Lazy><SendPage /></Lazy>
                       </ProtectedRoute>
                     } />
 
@@ -105,18 +107,18 @@ function App() {
                     } />
                     <Route path="pos" element={<Navigate to="/sell" replace />} />
 
-                    <Route path="books" element={<Books />} />
-                    <Route path="books/:id" element={<BookDetail />} />
+                    <Route path="books" element={<Lazy><Books /></Lazy>} />
+                    <Route path="books/:id" element={<Lazy><BookDetail /></Lazy>} />
 
                     <Route path="cartons" element={
                       <ProtectedRoute allowedRoles={['superadmin', 'admin', 'warehouse']}>
-                        <CartonSheet />
+                        <Lazy><CartonSheet /></Lazy>
                       </ProtectedRoute>
                     } />
 
                     <Route path="fix" element={
                       <ProtectedRoute allowedRoles={['superadmin', 'admin', 'warehouse']}>
-                        <FixStock />
+                        <Lazy><FixStock /></Lazy>
                       </ProtectedRoute>
                     } />
 
@@ -124,7 +126,7 @@ function App() {
                     <Route path="settings/account" element={<AccountSettings />} />
                     <Route path="settings/vendors" element={
                       <ProtectedRoute allowedRoles={['superadmin', 'admin', 'warehouse', 'receptionist']}>
-                        <Vendors />
+                        <Lazy><Vendors /></Lazy>
                       </ProtectedRoute>
                     } />
                     <Route path="settings/discounts" element={
@@ -157,7 +159,8 @@ function App() {
                     <Route path="reports" element={<Navigate to="/settings" replace />} />
                     <Route path="books/manage" element={<Navigate to="/books" replace />} />
                     <Route path="ops" element={<Navigate to="/receive" replace />} />
-                    <Route path="dashboard" element={<Navigate to="/" replace />} />                  </Route>
+                    <Route path="dashboard" element={<Navigate to="/" replace />} />
+                  </Route>
 
                   <Route path="/account" element={<Navigate to="/settings/account" replace />} />
                   <Route path="*" element={<Navigate to="/" replace />} />
