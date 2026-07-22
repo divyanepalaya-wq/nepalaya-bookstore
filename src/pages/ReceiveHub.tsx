@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { canWarehouse, canPOS } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 
-/** Receive hub · Nepalaya cartons or vendor → shelf. */
+/** Stock in hub · Nepalaya cartons or vendor → shelf. */
 export default function ReceiveHub() {
   const navigate = useNavigate()
   const { appUser } = useAuth()
@@ -15,8 +15,8 @@ export default function ReceiveHub() {
     {
       show: wh,
       to: '/receive/warehouse',
-      title: 'Nepalaya · warehouse',
-      sub: 'X book now in Y carton · गोदाममा',
+      title: 'Nepalaya',
+      sub: 'Into warehouse cartons',
       icon: PackagePlus,
       color: 'border-blue-200 bg-blue-50/80 hover:bg-blue-50',
       iconColor: 'text-blue-700',
@@ -24,8 +24,8 @@ export default function ReceiveHub() {
     {
       show: store,
       to: '/receive/vendor',
-      title: 'Nepali & English · shelf',
-      sub: 'Straight to shelf · कार्टुन छैन',
+      title: 'Nepali / English',
+      sub: 'Straight to store shelf',
       icon: Truck,
       color: 'border-green-200 bg-green-50/80 hover:bg-green-50',
       iconColor: 'text-green-700',
@@ -35,9 +35,9 @@ export default function ReceiveHub() {
   return (
     <div className="mx-auto max-w-lg space-y-5">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Receive</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Stock in</h1>
         <p className="text-sm text-gray-500 mt-0.5">
-          Stock in · कहाँबाट आयो?
+          Add books that arrived · mistaken adds can be undone on the book page
         </p>
       </div>
 

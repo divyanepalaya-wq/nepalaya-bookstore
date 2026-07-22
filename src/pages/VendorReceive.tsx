@@ -4,7 +4,7 @@ import { Truck, Search, CheckCircle2 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useWarehouse } from '@/contexts/WarehouseContext'
 import { useBooks } from '@/contexts/BooksContext'
-import { receiveVendorStock } from '@/lib/inventoryService'
+import { receiveVendorStock, removeShelfStock } from '@/lib/inventoryService'
 import { isThirdParty, categoryLabel } from '@/lib/bookCategories'
 import { opsErrorMessage } from '@/lib/opsErrors'
 import type { Book } from '@/types'
@@ -23,7 +23,8 @@ export default function VendorReceive() {
   const [selected, setSelected] = useState<Book | null>(null)
   const [qty, setQty] = useState('')
   const [busy, setBusy] = useState(false)
-  const [lastOk, setLastOk] = useState<{ name: string; qty: number; before: number; after: number } | null>(null)
+  const [undoing, setUndoing] = useState(false)
+  const [lastOk, setLastOk] = useState<{ name: string; bookId: string; qty: number; before: number; after: number } | null>(null)
 
   const thirdParty = useMemo(() => books.filter((b) => isThirdParty(b)), [books])
 
@@ -62,7 +63,7 @@ export default function VendorReceive() {
         notes: 'Vendor delivery',
         user: appUser,
       })
-      setLastOk({ name: selected.name, qty: n, before, after: before + n })
+      setLastOk({ name: selected.name, bookId: selected.id, qty: n, before, after: before + n })
       toast.success(`${n} pcs · ${selected.name} came from vendor → shelf`)
       setQty('')
       setSelected(null)
@@ -74,6 +75,28 @@ export default function VendorReceive() {
     }
   }
 
+  const handleUndo = async () => {
+    if (!appUser || !lastOk) return
+    if (!confirm(`Undo? Remove ${lastOk.qty} pcs of “${lastOk.name}” from shelf.`)) return
+    setUndoing(true)
+    try {
+      await removeShelfStock({
+        bookId: lastOk.bookId,
+        bookName: lastOk.name,
+        quantity: lastOk.qty,
+        bookstoreId,
+        reason: 'Undo mistaken vendor receive',
+        user: appUser,
+      })
+      toast.success(`Undone · −${lastOk.qty} from shelf`)
+      setLastOk(null)
+    } catch (e) {
+      toast.error(opsErrorMessage(e, 'Undo failed'))
+    } finally {
+      setUndoing(false)
+    }
+  }
+
   if (loading) return <PageSpinner />
 
   return (
@@ -81,22 +104,33 @@ export default function VendorReceive() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
           <Truck className="h-7 w-7 text-accent-600" />
-          Receive vendor
+          Stock in · Nepali / English
         </h1>
         <p className="text-sm text-gray-500 mt-0.5">
-          Nepali & English · straight to shelf · कार्टुन छैन
+          Straight to store shelf
         </p>
       </div>
 
       {lastOk && (
-        <div className="rounded-2xl border border-green-200 bg-green-50 p-4 flex gap-3">
-          <CheckCircle2 className="h-6 w-6 text-green-700 shrink-0" />
-          <div>
-            <p className="font-semibold text-green-900">{lastOk.name}</p>
-            <p className="text-sm text-green-800 mt-1">
-              {lastOk.qty} pcs came from vendor → bookstore · shelf {lastOk.before} → <strong>{lastOk.after}</strong>
-            </p>
+        <div className="rounded-2xl border border-green-200 bg-green-50 p-4 space-y-3">
+          <div className="flex gap-3">
+            <CheckCircle2 className="h-6 w-6 text-green-700 shrink-0" />
+            <div>
+              <p className="font-semibold text-green-900">{lastOk.name}</p>
+              <p className="text-sm text-green-800 mt-1">
+                {lastOk.qty} pcs came from vendor → bookstore · shelf {lastOk.before} → <strong>{lastOk.after}</strong>
+              </p>
+            </div>
           </div>
+          <Button
+            variant="outline"
+            className="w-full min-h-11 text-red-700 border-red-200"
+            loading={undoing}
+            disabled={undoing}
+            onClick={() => void handleUndo()}
+          >
+            Undo this receive
+          </Button>
         </div>
       )}
 

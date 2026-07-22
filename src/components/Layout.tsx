@@ -51,7 +51,7 @@ export function Layout({ children }: { children?: ReactNode }) {
   }, [])
 
   const mainNav: NavLinkItem[] = [
-    { to: '/receive', label: 'Receive', sub: 'Stock in', icon: <Inbox className="h-5 w-5" />, show: wh || pos },
+    { to: '/receive', label: 'Stock in', sub: 'Add stock', icon: <Inbox className="h-5 w-5" />, show: wh || pos },
     { to: '/send', label: 'Send', sub: 'Scan · move', icon: <Send className="h-5 w-5" />, show: wh || pos },
     { to: '/sell', label: 'Sell', sub: 'POS', icon: <ShoppingCart className="h-5 w-5" />, show: pos },
     { to: '/books', label: 'Books', sub: 'Catalog', icon: <BookOpen className="h-5 w-5" />, show: true },
@@ -61,13 +61,13 @@ export function Layout({ children }: { children?: ReactNode }) {
 
   const mobileTabs = warehouseOnly
     ? [
-        { to: '/receive', label: 'Receive', icon: <Inbox className="h-5 w-5" /> },
+        { to: '/receive', label: 'Stock in', icon: <Inbox className="h-5 w-5" /> },
         { to: '/send', label: 'Send', icon: <Send className="h-5 w-5" /> },
         { to: '/cartons', label: 'Cartons', icon: <Boxes className="h-5 w-5" /> },
         { to: '/books', label: 'Books', icon: <BookOpen className="h-5 w-5" /> },
       ]
     : [
-        { to: '/receive', label: 'Receive', icon: <Inbox className="h-5 w-5" /> },
+        { to: '/receive', label: 'Stock in', icon: <Inbox className="h-5 w-5" /> },
         { to: '/send', label: 'Send', icon: <Send className="h-5 w-5" /> },
         { to: '/sell', label: 'Sell', icon: <ShoppingCart className="h-5 w-5" /> },
         { to: '/books', label: 'Books', icon: <BookOpen className="h-5 w-5" /> },
@@ -129,7 +129,7 @@ export function Layout({ children }: { children?: ReactNode }) {
         <nav className={cn('flex-1 overflow-y-auto py-3', collapsed ? 'px-1.5' : 'px-3')}>
           {!collapsed && (
             <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-wider text-accent-400">
-              Receive · Send · Sell
+              Stock in · Send · Sell
             </p>
           )}
           {mainNav.map((item) => (

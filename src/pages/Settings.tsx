@@ -21,7 +21,7 @@ const links = [
   {
     to: '/settings/users',
     label: 'Staff',
-    desc: 'Add staff · roles',
+    desc: 'Add staff · roles · passwords',
     icon: Users,
     show: (role?: string) => role === 'superadmin',
   },

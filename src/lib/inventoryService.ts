@@ -242,6 +242,206 @@ export async function receiveVendorStock(params: {
   })
 }
 
+/**
+ * Undo a mistaken carton receive: soft-delete carton and remove its pieces
+ * from warehouse inventory. Only if carton still has qty and is not in transit.
+ */
+export async function voidCarton(params: {
+  boxId: string
+  bookstoreId: string
+  reason?: string
+  user: AppUser
+}): Promise<{ bookId: string; quantity: number; barcode: string }> {
+  const { boxId, bookstoreId, reason, user } = params
+
+  const { data: rpcData, error: rpcErr } = await supabase.rpc(
+    'void_carton' as never,
+    {
+      p_box_id: boxId,
+      p_bookstore_id: bookstoreId,
+      p_reason: reason ?? '',
+      p_client_request_id: newRequestId(),
+    } as never,
+  )
+
+  if (!rpcErr && rpcData) {
+    const r = rpcData as { bookId?: string; quantity?: number; barcode?: string }
+    return {
+      bookId: r.bookId ?? '',
+      quantity: r.quantity ?? 0,
+      barcode: r.barcode ?? '',
+    }
+  }
+  if (rpcErr && !/function|schema|does not exist|PGRST/i.test(rpcErr.message)) {
+    fail(rpcErr, 'Could not void carton')
+  }
+
+  const { data: row, error: fetchErr } = await supabase
+    .from('boxes')
+    .select('*')
+    .eq('id', boxId)
+    .maybeSingle()
+  if (fetchErr) fail(fetchErr, 'Could not load carton')
+  if (!row) throw new Error('Carton not found')
+  const box = mapBox(row as Record<string, unknown>)
+  if (box.isDeleted || box.quantity <= 0) throw new Error('Carton already empty')
+  if (box.status === 'in_transit') throw new Error('Carton is in transit — receive or cancel transfer first')
+
+  const qty = box.quantity
+  const warehouseId = box.warehouseId
+  const now = new Date().toISOString()
+
+  const { error: boxErr } = await supabase
+    .from('boxes')
+    .update({
+      quantity: 0,
+      status: 'empty',
+      is_deleted: true,
+      notes: [box.notes, reason?.trim() || 'Voided mistaken receive'].filter(Boolean).join(' · '),
+      opened_at: now,
+    })
+    .eq('id', boxId)
+  if (boxErr) fail(boxErr, 'Could not void carton')
+
+  await adjustLocationQty({
+    bookId: box.bookId,
+    locationId: warehouseId,
+    bookstoreId,
+    delta: -qty,
+  })
+
+  await writeMovement({
+    type: 'adjustment',
+    bookId: box.bookId,
+    bookName: box.bookName,
+    quantity: -qty,
+    warehouseId,
+    boxId,
+    reason: reason?.trim() || `Voided carton ${box.barcode} (mistaken receive)`,
+    performedBy: user.uid,
+    performedByName: user.displayName,
+  })
+
+  await writeAuditLog({
+    action: 'box_deleted',
+    entity: 'box',
+    entityId: boxId,
+    details: `Voided carton ${box.barcode}: -${qty} pcs of "${box.bookName}"`,
+    performedBy: user.uid,
+    performedByName: user.displayName,
+    role: user.role,
+  })
+
+  return { bookId: box.bookId, quantity: qty, barcode: box.barcode }
+}
+
+/** Void several cartons (e.g. undo last warehouse receive). */
+export async function voidCartons(params: {
+  boxIds: string[]
+  bookstoreId: string
+  reason?: string
+  user: AppUser
+}): Promise<number> {
+  let pcs = 0
+  for (const boxId of params.boxIds) {
+    const r = await voidCarton({
+      boxId,
+      bookstoreId: params.bookstoreId,
+      reason: params.reason,
+      user: params.user,
+    })
+    pcs += r.quantity
+  }
+  return pcs
+}
+
+/**
+ * Remove pieces from store shelf (undo mistaken vendor receive or over-count).
+ */
+export async function removeShelfStock(params: {
+  bookId: string
+  bookName: string
+  quantity: number
+  bookstoreId: string
+  reason?: string
+  user: AppUser
+}): Promise<void> {
+  const { bookId, bookName, quantity, bookstoreId, reason, user } = params
+  if (quantity <= 0) throw new Error('Quantity must be positive')
+
+  await adjustLocationQty({
+    bookId,
+    locationId: bookstoreId,
+    bookstoreId,
+    delta: -quantity,
+  })
+
+  await writeMovement({
+    type: 'adjustment',
+    bookId,
+    bookName,
+    quantity: -quantity,
+    warehouseId: bookstoreId,
+    reason: reason?.trim() || 'Removed from shelf (mistaken receive)',
+    performedBy: user.uid,
+    performedByName: user.displayName,
+  })
+
+  await writeAuditLog({
+    action: 'stock_adjusted',
+    entity: 'book',
+    entityId: bookId,
+    details: `Removed ${quantity}x "${bookName}" from shelf`,
+    performedBy: user.uid,
+    performedByName: user.displayName,
+    role: user.role,
+  })
+}
+
+/** Apply ±delta to a location in book_inventory (and books.in_stock when retail). */
+async function adjustLocationQty(params: {
+  bookId: string
+  locationId: string
+  bookstoreId: string
+  delta: number
+}): Promise<void> {
+  const { bookId, locationId, bookstoreId, delta } = params
+  if (delta === 0) return
+
+  const { data: inv, error } = await supabase
+    .from('book_inventory')
+    .select('*')
+    .eq('book_id', bookId)
+    .maybeSingle()
+  if (error) fail(error, 'Failed to load inventory')
+
+  const by = { ...((inv?.by_warehouse as Record<string, number>) ?? {}) }
+  const current = Number(by[locationId] ?? (locationId === bookstoreId ? inv?.retail_qty : 0) ?? 0) || 0
+  const next = current + delta
+  if (next < 0) throw new Error(`Not enough stock at location (have ${current}, need ${Math.abs(delta)})`)
+  by[locationId] = next
+
+  let whTotal = 0
+  for (const [k, v] of Object.entries(by)) {
+    if (k === bookstoreId) continue
+    whTotal += Number(v) || 0
+  }
+  const retailQty = Number(by[bookstoreId] ?? 0) || 0
+
+  const { error: uerr } = await supabase.from('book_inventory').upsert({
+    book_id: bookId,
+    by_warehouse: by,
+    total_warehouse_qty: whTotal,
+    retail_qty: retailQty,
+    updated_at: new Date().toISOString(),
+  })
+  if (uerr) fail(uerr, 'Failed to update inventory')
+
+  if (locationId === bookstoreId) {
+    await supabase.from('books').update({ in_stock: retailQty }).eq('id', bookId)
+  }
+}
+
 // ─── Transfers ────────────────────────────────────────────────────────────────
 
 export async function createTransfer(params: {

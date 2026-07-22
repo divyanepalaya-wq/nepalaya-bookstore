@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, Boxes, PackagePlus } from 'lucide-react'
+import { Search, Boxes, PackagePlus, Download } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { mapBox } from '@/lib/mappers'
 import { useBooks } from '@/contexts/BooksContext'
 import { useWarehouse } from '@/contexts/WarehouseContext'
 import { isNepalaya } from '@/lib/bookCategories'
+import { downloadCSV } from '@/lib/csvUtils'
 import { cn } from '@/lib/utils'
 import type { Box } from '@/types'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { PageSpinner } from '@/components/ui/Spinner'
 
-/** Spreadsheet-style Nepalaya carton stock for warehouse (Ramesh). */
+/** Spreadsheet-style Nepalaya carton stock for warehouse. */
 export default function CartonSheet() {
   const navigate = useNavigate()
   const { books, loading: booksLoading } = useBooks()
@@ -88,6 +89,22 @@ export default function CartonSheet() {
     return { boxesN, pcs, titles: rows.length }
   }, [rows])
 
+  const exportExcel = () => {
+    downloadCSV(
+      `nepalaya-cartons-${new Date().toISOString().slice(0, 10)}.csv`,
+      ['Book', 'Author', 'Cartons', 'Pcs per carton', 'Warehouse pcs', 'Backroom pcs', 'Total pcs'],
+      rows.map((r) => [
+        r.book.name,
+        r.book.author ?? '',
+        r.boxes,
+        r.pcsPerBox ?? '',
+        r.whPcs,
+        r.brPcs,
+        r.total,
+      ]),
+    )
+  }
+
   if (booksLoading || loading) return <PageSpinner />
 
   return (
@@ -95,13 +112,29 @@ export default function CartonSheet() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Cartons</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Nepalaya · गोदाम स्टक · {totals.titles} titles · {totals.boxesN} cartons · {totals.pcs.toLocaleString()} pcs
-          </p>
+          <p className="text-sm text-gray-500 mt-0.5">Nepalaya warehouse sheet</p>
         </div>
-        <Button size="lg" className="min-h-12 px-5 text-base" onClick={() => navigate('/receive/warehouse')}>
-          <PackagePlus className="h-5 w-5" /> Receive
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button size="lg" variant="outline" className="min-h-12" onClick={exportExcel}>
+            <Download className="h-5 w-5" /> Excel
+          </Button>
+          <Button size="lg" className="min-h-12 px-5 text-base" onClick={() => navigate('/receive/warehouse')}>
+            <PackagePlus className="h-5 w-5" /> Stock in
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { label: 'Titles', value: totals.titles },
+          { label: 'Cartons', value: totals.boxesN },
+          { label: 'Pieces', value: totals.pcs.toLocaleString() },
+        ].map((c) => (
+          <div key={c.label} className="rounded-2xl border border-gray-200 bg-white p-4 text-center">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">{c.label}</p>
+            <p className="text-2xl font-bold tabular-nums text-gray-900 mt-1">{c.value}</p>
+          </div>
+        ))}
       </div>
 
       <div className="relative">
@@ -116,15 +149,15 @@ export default function CartonSheet() {
 
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
         <div className="grid grid-cols-[1fr_4.5rem_4.5rem_5rem] gap-1 border-b border-gray-100 bg-gray-50 px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-          <span>Book Title</span>
-          <span className="text-right">Boxes</span>
-          <span className="text-right">Pcs/Box</span>
+          <span>Book</span>
+          <span className="text-right">Cartons</span>
+          <span className="text-right">Pcs/box</span>
           <span className="text-right">Total</span>
         </div>
         <ul className="divide-y divide-gray-100">
           {rows.length === 0 && (
             <li className="px-4 py-12 text-center text-gray-400">
-              No Nepalaya stock yet. Tap Add stock.
+              No Nepalaya stock yet. Tap Stock in.
             </li>
           )}
           {rows.map((r) => (

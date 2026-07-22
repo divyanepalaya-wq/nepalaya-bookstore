@@ -13,10 +13,10 @@ const GUIDE_SEEN_KEY = 'nepalaya-guide-seen-v5'
 const FLOW_STEPS = [
   {
     n: 1,
-    title: 'Receive',
-    body: 'Nepalaya · warehouse cartons. Nepali & English · straight to shelf · कार्टुन छैन.',
+            title: 'Stock in',
+    body: 'Nepalaya into warehouse cartons. Nepali / English straight to shelf.',
     action: '/receive',
-    actionLabel: 'Receive',
+    actionLabel: 'Stock in',
     icon: Inbox,
   },
   {
@@ -89,12 +89,12 @@ export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
         {tab === 'flow' && (
           <div className="space-y-3">
             <p className="text-sm text-gray-600">
-              Receive · Send · Sell. Books and Cartons for looking things up.
+              Stock in · Send · Sell. Books and Cartons for looking things up.
             </p>
 
             <div className="flex flex-wrap items-center justify-center gap-1 sm:gap-2 py-3 px-2 rounded-xl bg-gradient-to-r from-blue-50 via-orange-50 to-green-50 border border-gray-100">
               {[
-                { label: 'Receive', icon: Inbox, color: 'text-blue-700 bg-blue-100' },
+                { label: 'Stock in', icon: Inbox, color: 'text-blue-700 bg-blue-100' },
                 { label: 'Send', icon: Send, color: 'text-orange-700 bg-orange-100' },
                 { label: 'Sell', icon: ShoppingCart, color: 'text-green-700 bg-green-100' },
               ].map((s, i) => (

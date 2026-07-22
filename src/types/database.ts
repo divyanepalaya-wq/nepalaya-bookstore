@@ -344,6 +344,15 @@ export interface Database {
         }
         Returns: Json
       }
+      void_carton: {
+        Args: {
+          p_box_id: string
+          p_bookstore_id: string
+          p_reason?: string
+          p_client_request_id?: string | null
+        }
+        Returns: Json
+      }
       receive_vendor_stock: {
         Args: {
           p_book_id: string

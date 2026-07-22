@@ -216,6 +216,8 @@ export type AuditAction =
   | 'stocktake_cancelled'
   | 'box_putaway'
   | 'vendor_receive'
+  | 'box_deleted'
+  | 'stock_adjusted'
 
 export interface AuditLog {
   id: string

@@ -4,7 +4,7 @@ import { PackagePlus, Printer, Search, CheckCircle2 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useWarehouse } from '@/contexts/WarehouseContext'
 import { useBooks } from '@/contexts/BooksContext'
-import { receiveBoxes } from '@/lib/inventoryService'
+import { receiveBoxes, voidCartons } from '@/lib/inventoryService'
 import { printBoxLabels, boxToLabelData } from '@/lib/boxLabel'
 import { isNepalaya } from '@/lib/bookCategories'
 import { opsErrorMessage } from '@/lib/opsErrors'
@@ -24,6 +24,7 @@ export default function AddStock() {
   const [totalQty, setTotalQty] = useState('')
   const [copiesPerBox, setCopiesPerBox] = useState('24')
   const [submitting, setSubmitting] = useState(false)
+  const [undoing, setUndoing] = useState(false)
   const [created, setCreated] = useState<Array<{ id: string; barcode: string; quantity: number }>>([])
 
   const nepalayaBooks = useMemo(() => books.filter((b) => isNepalaya(b)), [books])
@@ -70,12 +71,32 @@ export default function AddStock() {
         user: appUser,
       })
       setCreated(result.boxes)
-      toast.success(`Created ${result.boxes.length} carton(s)`)
+      toast.success(`${result.boxes.length} carton(s) · ${selectedBook.name} now in warehouse`)
       setTotalQty('')
     } catch (e) {
       toast.error(opsErrorMessage(e, 'Could not add stock'))
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const handleUndo = async () => {
+    if (!appUser || created.length === 0) return
+    if (!confirm(`Undo this receive? Removes ${created.length} carton(s).`)) return
+    setUndoing(true)
+    try {
+      const pcs = await voidCartons({
+        boxIds: created.map((b) => b.id),
+        bookstoreId,
+        reason: 'Undo mistaken warehouse receive',
+        user: appUser,
+      })
+      toast.success(`Undone · −${pcs} pcs`)
+      setCreated([])
+    } catch (e) {
+      toast.error(opsErrorMessage(e, 'Undo failed'))
+    } finally {
+      setUndoing(false)
     }
   }
 
@@ -86,10 +107,10 @@ export default function AddStock() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
           <PackagePlus className="h-7 w-7 text-accent-600" />
-          Nepalaya · warehouse
+          Stock in · Nepalaya
         </h1>
         <p className="text-sm text-gray-500 mt-0.5">
-          X book now in Y carton · गोदाममा · ~{copiesPerBox} pcs/box
+          Into warehouse cartons · ~{copiesPerBox} pcs per carton
         </p>
       </div>
 
@@ -182,6 +203,16 @@ export default function AddStock() {
             }
           >
             <Printer className="h-5 w-5" /> Print labels
+          </Button>
+          <Button
+            size="lg"
+            variant="outline"
+            className="w-full min-h-12 text-red-700 border-red-200"
+            loading={undoing}
+            disabled={undoing}
+            onClick={() => void handleUndo()}
+          >
+            Undo this receive
           </Button>
         </div>
       )}

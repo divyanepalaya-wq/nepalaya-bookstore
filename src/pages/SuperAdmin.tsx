@@ -44,10 +44,10 @@ import { downloadCSV } from '@/lib/csvUtils'
 type Tab = 'analytics' | 'users' | 'sales' | 'audit'
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
+  { id: 'users',     label: 'Staff',      icon: <Users className="h-4 w-4" /> },
+  { id: 'sales',     label: 'Sales',      icon: <Receipt className="h-4 w-4" /> },
   { id: 'analytics', label: 'Analytics',  icon: <BarChart2 className="h-4 w-4" /> },
-  { id: 'users',     label: 'Users',      icon: <Users className="h-4 w-4" /> },
-  { id: 'sales',     label: 'Sales Log',  icon: <Receipt className="h-4 w-4" /> },
-  { id: 'audit',     label: 'Audit Log',  icon: <FileText className="h-4 w-4" /> },
+  { id: 'audit',     label: 'Audit',      icon: <FileText className="h-4 w-4" /> },
 ]
 
 // Labels match roleLabel() in @/lib/roles — operator-facing names, not raw role slugs.
@@ -96,7 +96,7 @@ export default function SuperAdmin() {
   const { appUser } = useAuth()
   const { books } = useBooks()
   const { bookstoreId } = useWarehouse()
-  const [activeTab, setActiveTab] = useState<Tab>('analytics')
+  const [activeTab, setActiveTab] = useState<Tab>('users')
 
   // ─── Data ──────────────────────────────────────────────────────────────────
   const [users, setUsers]         = useState<AppUser[]>([])
@@ -699,8 +699,8 @@ export default function SuperAdmin() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-xl font-bold text-gray-900">Super Admin</h1>
-        <p className="text-sm text-gray-500">Full system overview and controls</p>
+        <h1 className="text-xl font-bold text-gray-900">Staff</h1>
+        <p className="text-sm text-gray-500">Add people · roles · passwords</p>
       </div>
 
       {/* Tabs */}

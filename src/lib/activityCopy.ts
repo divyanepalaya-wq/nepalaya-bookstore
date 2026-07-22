@@ -37,5 +37,14 @@ export function movementLine(m: {
   if (m.type === 'return') {
     return `${who} · returned ${qty} pcs to shelf`
   }
+  if (m.type === 'adjustment') {
+    if (m.quantity < 0) {
+      if (reason.includes('void') || reason.includes('mistaken')) {
+        return `${who} · removed ${qty} pcs (undo / fix)`
+      }
+      return `${who} · removed ${qty} pcs`
+    }
+    return `${who} · adjusted +${qty} pcs`
+  }
   return `${who} · ${m.type.replace(/_/g, ' ')} · ${m.quantity} pcs${m.reason ? ` · ${m.reason}` : ''}`
 }

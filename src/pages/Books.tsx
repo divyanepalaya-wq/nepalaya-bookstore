@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Search, BookOpen, Plus, Pencil, Trash2 } from 'lucide-react'
+import { Search, BookOpen, Plus, Pencil, Trash2, Sparkles } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useBooks } from '@/contexts/BooksContext'
 import { useWarehouse } from '@/contexts/WarehouseContext'
@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { PageSpinner } from '@/components/ui/Spinner'
+import { BookEnrichModal } from '@/components/BookEnrichModal'
 
 const CATEGORIES = CATEGORY_OPTIONS
 
@@ -32,6 +33,7 @@ export default function Books() {
   const [language, setLanguage] = useState<BookType>('Nepalaya')
   const [mrp, setMrp] = useState('')
   const [saving, setSaving] = useState(false)
+  const [enrichBook, setEnrichBook] = useState<Book | null>(null)
 
   const canEdit = canWarehouse(appUser?.role) || isFullAdmin(appUser?.role)
 
@@ -193,6 +195,9 @@ export default function Books() {
             </Link>
             {canEdit && (
               <div className="flex gap-1 shrink-0">
+                <Button type="button" variant="outline" size="sm" className="min-h-10 w-10 p-0" title="Find cover / ISBN" onClick={() => setEnrichBook(book)}>
+                  <Sparkles className="h-4 w-4" />
+                </Button>
                 <Button type="button" variant="outline" size="sm" className="min-h-10 w-10 p-0" onClick={() => openEdit(book)}>
                   <Pencil className="h-4 w-4" />
                 </Button>
@@ -223,7 +228,7 @@ export default function Books() {
             onChange={(e) => setLanguage(e.target.value as BookType)}
             options={CATEGORIES.map((c) => ({
               value: c.value,
-              label: `${c.label} — ${c.hint}`,
+              label: c.label,
             }))}
           />
           <Input
@@ -241,6 +246,14 @@ export default function Books() {
           </div>
         </div>
       </Modal>
+
+      {enrichBook && (
+        <BookEnrichModal
+          open={!!enrichBook}
+          book={enrichBook}
+          onClose={() => setEnrichBook(null)}
+        />
+      )}
     </div>
   )
 }
