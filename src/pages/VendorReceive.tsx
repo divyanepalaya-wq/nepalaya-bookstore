@@ -1,30 +1,71 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Truck, Search, CheckCircle2 } from 'lucide-react'
+import { Truck, Search, CheckCircle2, Plus } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useWarehouse } from '@/contexts/WarehouseContext'
 import { useBooks } from '@/contexts/BooksContext'
 import { receiveVendorStock, removeShelfStock } from '@/lib/inventoryService'
+import { listVendors } from '@/lib/vendors'
 import { isThirdParty, categoryLabel } from '@/lib/bookCategories'
 import { opsErrorMessage } from '@/lib/opsErrors'
-import type { Book } from '@/types'
+import type { Book, Vendor } from '@/types'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
+import { Select } from '@/components/ui/Select'
 import { Badge } from '@/components/ui/Badge'
 import { PageSpinner } from '@/components/ui/Spinner'
 
-/** Third-party Nepali/English → store shelf only. */
+/** Third-party Nepali/English → store shelf · pick vendor + book. */
 export default function VendorReceive() {
   const { appUser } = useAuth()
   const { bookstoreId, getRetailStock } = useWarehouse()
   const { books, loading } = useBooks()
 
+  const [vendors, setVendors] = useState<(Vendor & { id: string })[]>([])
+  const [vendorsLoading, setVendorsLoading] = useState(true)
+  const [vendorId, setVendorId] = useState('')
   const [bookSearch, setBookSearch] = useState('')
   const [selected, setSelected] = useState<Book | null>(null)
   const [qty, setQty] = useState('')
   const [busy, setBusy] = useState(false)
   const [undoing, setUndoing] = useState(false)
-  const [lastOk, setLastOk] = useState<{ name: string; bookId: string; qty: number; before: number; after: number } | null>(null)
+  const [lastOk, setLastOk] = useState<{
+    name: string
+    bookId: string
+    qty: number
+    before: number
+    after: number
+    vendorName: string
+  } | null>(null)
+
+  const vendor = vendors.find((v) => v.id === vendorId) ?? null
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      try {
+        const rows = await listVendors({ activeOnly: true })
+        if (cancelled) return
+        setVendors(rows)
+        if (rows.length === 1) setVendorId(rows[0].id)
+      } catch (e) {
+        if (!cancelled) {
+          toast.error(
+            e instanceof Error && /relation|schema|does not exist/i.test(e.message)
+              ? 'Vendors not set up yet — run migration 009 in Supabase, or add vendors in Settings'
+              : e instanceof Error
+                ? e.message
+                : 'Could not load vendors',
+          )
+        }
+      } finally {
+        if (!cancelled) setVendorsLoading(false)
+      }
+    }
+    void load()
+    return () => { cancelled = true }
+  }, [])
 
   const thirdParty = useMemo(() => books.filter((b) => isThirdParty(b)), [books])
 
@@ -43,6 +84,10 @@ export default function VendorReceive() {
 
   const handleReceive = async () => {
     if (!appUser || !selected) return
+    if (!vendor) {
+      toast.error('Choose a vendor first')
+      return
+    }
     if (!isThirdParty(selected)) {
       toast.error('Only Nepali or English (vendor) books')
       return
@@ -60,11 +105,19 @@ export default function VendorReceive() {
         bookName: selected.name,
         quantity: n,
         bookstoreId,
-        notes: 'Vendor delivery',
+        vendorId: vendor.id,
+        vendorName: vendor.name,
         user: appUser,
       })
-      setLastOk({ name: selected.name, bookId: selected.id, qty: n, before, after: before + n })
-      toast.success(`${n} pcs · ${selected.name} came from vendor → shelf`)
+      setLastOk({
+        name: selected.name,
+        bookId: selected.id,
+        qty: n,
+        before,
+        after: before + n,
+        vendorName: vendor.name,
+      })
+      toast.success(`${n} pcs · ${selected.name} from ${vendor.name} → shelf`)
       setQty('')
       setSelected(null)
       setBookSearch('')
@@ -97,7 +150,7 @@ export default function VendorReceive() {
     }
   }
 
-  if (loading) return <PageSpinner />
+  if (loading || vendorsLoading) return <PageSpinner />
 
   return (
     <div className="mx-auto max-w-lg space-y-5">
@@ -107,7 +160,7 @@ export default function VendorReceive() {
           Stock in · Nepali / English
         </h1>
         <p className="text-sm text-gray-500 mt-0.5">
-          Straight to store shelf
+          Pick vendor · pick book · straight to shelf
         </p>
       </div>
 
@@ -118,7 +171,8 @@ export default function VendorReceive() {
             <div>
               <p className="font-semibold text-green-900">{lastOk.name}</p>
               <p className="text-sm text-green-800 mt-1">
-                {lastOk.qty} pcs came from vendor → bookstore · shelf {lastOk.before} → <strong>{lastOk.after}</strong>
+                {lastOk.qty} pcs from <strong>{lastOk.vendorName}</strong> → bookstore · shelf{' '}
+                {lastOk.before} → <strong>{lastOk.after}</strong>
               </p>
             </div>
           </div>
@@ -134,7 +188,32 @@ export default function VendorReceive() {
         </div>
       )}
 
-      {!selected ? (
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 space-y-3">
+        <Select
+          label="From vendor"
+          value={vendorId}
+          onChange={(e) => setVendorId(e.target.value)}
+          placeholder="Choose vendor…"
+          options={vendors.map((v) => ({ value: v.id, label: v.name }))}
+        />
+        {vendors.length === 0 && (
+          <p className="text-sm text-amber-800 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+            No vendors yet.{' '}
+            <Link to="/settings/vendors" className="font-semibold underline">
+              Add a vendor in Settings
+            </Link>
+          </p>
+        )}
+        {vendors.length > 0 && (
+          <Link to="/settings/vendors" className="inline-flex items-center gap-1 text-sm text-accent-700">
+            <Plus className="h-3.5 w-3.5" /> Manage vendors
+          </Link>
+        )}
+      </div>
+
+      {!vendorId ? (
+        <p className="text-center text-sm text-gray-400 py-6">Choose a vendor to continue</p>
+      ) : !selected ? (
         <div className="space-y-3">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
@@ -176,6 +255,9 @@ export default function VendorReceive() {
           <button type="button" className="text-sm text-accent-700" onClick={() => setSelected(null)}>
             ← Change book
           </button>
+          <p className="text-sm text-gray-500">
+            From <strong className="text-gray-800">{vendor?.name}</strong>
+          </p>
           <p className="text-xl font-bold text-gray-900">{selected.name}</p>
           <Badge variant="blue">{categoryLabel(selected.language)}</Badge>
           <p className="text-sm text-gray-500">
@@ -194,7 +276,7 @@ export default function VendorReceive() {
             size="lg"
             className="w-full min-h-14 text-lg"
             loading={busy}
-            disabled={busy}
+            disabled={busy || !vendor}
             onClick={() => void handleReceive()}
           >
             Add to shelf

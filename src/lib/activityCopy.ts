@@ -7,15 +7,22 @@ export function movementLine(m: {
   warehouseId?: string
   fromWarehouseId?: string
   toWarehouseId?: string
+  vendorName?: string
   performedByName?: string
 }): string {
   const who = m.performedByName || 'Staff'
   const qty = Math.abs(m.quantity)
   const reason = (m.reason || '').toLowerCase()
+  const fromVendor =
+    m.vendorName ||
+    (m.reason?.match(/from\s+(.+?)(?:\s*→|$)/i)?.[1]?.trim())
 
   if (m.type === 'receive' || reason.includes('vendor')) {
-    if (reason.includes('vendor')) {
-      return `${who} · ${qty} pcs came from vendor → bookstore`
+    if (reason.includes('vendor') || m.vendorName) {
+      if (qty === 0) return `${who} · noted vendor ${fromVendor || '—'}`
+      return fromVendor
+        ? `${who} · ${qty} pcs came from ${fromVendor} → bookstore`
+        : `${who} · ${qty} pcs came from vendor → bookstore`
     }
     return `${who} · ${qty} pcs received into warehouse cartons`
   }

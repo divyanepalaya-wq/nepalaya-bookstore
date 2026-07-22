@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
-import { User, Percent, Users, Warehouse, ChevronRight, RotateCcw } from 'lucide-react'
+import { User, Percent, Users, Warehouse, ChevronRight, RotateCcw, Truck } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { roleLabel, isFullAdmin } from '@/lib/roles'
+import { roleLabel, isFullAdmin, canVendorReceive } from '@/lib/roles'
 
 const links = [
   {
@@ -10,6 +10,13 @@ const links = [
     desc: 'Reverse mistaken receive or put on sale',
     icon: RotateCcw,
     show: (role?: string) => role === 'admin' || role === 'warehouse' || role === 'superadmin',
+  },
+  {
+    to: '/settings/vendors',
+    label: 'Vendors',
+    desc: 'Who you buy Nepali / English books from',
+    icon: Truck,
+    show: (role?: string) => canVendorReceive(role as never) || role === 'superadmin',
   },
   {
     to: '/settings/account',
@@ -23,7 +30,7 @@ const links = [
     label: 'Discounts',
     desc: 'Store discount rules',
     icon: Percent,
-    show: (role?: string) => role === 'admin' || role === 'superadmin',
+    show: (role?: string) => role === 'admin' || role === 'warehouse' || role === 'superadmin',
   },
   {
     to: '/settings/users',
@@ -37,7 +44,7 @@ const links = [
     label: 'Locations',
     desc: 'Warehouse · Backroom · Store',
     icon: Warehouse,
-    show: (role?: string) => role === 'admin' || role === 'superadmin',
+    show: (role?: string) => role === 'admin' || role === 'warehouse' || role === 'superadmin',
   },
 ]
 

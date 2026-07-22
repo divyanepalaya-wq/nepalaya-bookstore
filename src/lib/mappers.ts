@@ -3,7 +3,7 @@
 import type {
   AppUser, Book, Warehouse, Box, BookInventory, Transfer, TransferItem,
   InventoryMovement, Sale, SaleItem, Customer, Discount, Stocktake, ShelfLocation,
-  AuditLog,
+  AuditLog, Vendor,
 } from '@/types'
 
 export function mapProfile(row: {
@@ -150,10 +150,26 @@ export function mapMovement(row: Record<string, unknown>): InventoryMovement & {
     boxId: (row.box_id as string) ?? undefined,
     transferId: (row.transfer_id as string) ?? undefined,
     saleId: (row.sale_id as string) ?? undefined,
+    vendorId: (row.vendor_id as string) ?? undefined,
+    vendorName: (row.vendor_name as string) ?? undefined,
     reason: (row.reason as string) ?? '',
     performedBy: (row.performed_by as string) ?? '',
     performedByName: (row.performed_by_name as string) ?? '',
     createdAt: row.created_at as InventoryMovement['createdAt'],
+  }
+}
+
+export function mapVendor(row: Record<string, unknown>): Vendor & { id: string } {
+  return {
+    id: row.id as string,
+    name: (row.name as string) ?? '',
+    phone: (row.phone as string) ?? undefined,
+    contactPerson: (row.contact_person as string) ?? undefined,
+    notes: (row.notes as string) ?? undefined,
+    isActive: row.is_active !== false,
+    createdAt: row.created_at as Vendor['createdAt'],
+    createdBy: (row.created_by as string) ?? undefined,
+    updatedAt: (row.updated_at as Vendor['updatedAt']) ?? undefined,
   }
 }
 

@@ -405,10 +405,25 @@ export interface InventoryMovement {
   boxId?: string
   transferId?: string
   saleId?: string
+  vendorId?: string
+  vendorName?: string
   reason: string
   performedBy: string
   performedByName: string
   createdAt: AppTimestamp
+}
+
+/** Third-party book supplier (Nepali / English stock-in). */
+export interface Vendor {
+  id: string
+  name: string
+  phone?: string
+  contactPerson?: string
+  notes?: string
+  isActive: boolean
+  createdAt: AppTimestamp
+  createdBy?: string
+  updatedAt?: AppTimestamp
 }
 
 /** Default warehouse document IDs used for seeding */

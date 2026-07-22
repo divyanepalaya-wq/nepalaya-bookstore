@@ -21,6 +21,7 @@ import CartonSheet from '@/pages/CartonSheet'
 import Books from '@/pages/Books'
 import BookDetail from '@/pages/BookDetail'
 import FixStock from '@/pages/FixStock'
+import Vendors from '@/pages/Vendors'
 import Settings from '@/pages/Settings'
 import AccountSettings from '@/pages/AccountSettings'
 
@@ -121,6 +122,11 @@ function App() {
 
                     <Route path="settings" element={<Settings />} />
                     <Route path="settings/account" element={<AccountSettings />} />
+                    <Route path="settings/vendors" element={
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'warehouse', 'receptionist']}>
+                        <Vendors />
+                      </ProtectedRoute>
+                    } />
                     <Route path="settings/discounts" element={
                       <ProtectedRoute allowedRoles={['superadmin', 'admin', 'warehouse']}>
                         <Lazy><Discounts /></Lazy>

@@ -177,23 +177,29 @@ export async function receiveVendorStock(params: {
   bookName: string
   quantity: number
   bookstoreId: string
+  vendorId?: string
+  vendorName?: string
   notes?: string
   user: AppUser
 }): Promise<void> {
-  const { bookId, bookName, quantity, bookstoreId, notes, user } = params
+  const { bookId, bookName, quantity, bookstoreId, vendorId, vendorName, notes, user } = params
   if (quantity <= 0) throw new Error('Quantity must be positive')
+
+  const vendorLabel = vendorName?.trim() || 'vendor'
+  const reason =
+    notes?.trim() ||
+    `Vendor delivery from ${vendorLabel}`
 
   const { error } = await supabase.rpc('receive_vendor_stock', {
     p_book_id: bookId,
     p_book_name: bookName,
     p_quantity: quantity,
     p_bookstore_id: bookstoreId,
-    p_notes: notes ?? '',
+    p_notes: reason,
     p_client_request_id: newRequestId(),
   } as never)
 
   if (error) {
-    // Fallback if migration 006 not applied yet
     if (!/function|schema|does not exist|PGRST/i.test(error.message)) {
       fail(error, 'Vendor receive failed')
     }
@@ -225,17 +231,39 @@ export async function receiveVendorStock(params: {
       bookName,
       quantity,
       warehouseId: bookstoreId,
-      reason: notes?.trim() || 'Vendor delivery to store shelf',
+      vendorId,
+      vendorName: vendorLabel,
+      reason,
       performedBy: user.uid,
       performedByName: user.displayName,
     })
+  } else if (vendorId || vendorName) {
+    // Tag the RPC-written movement with vendor when columns exist
+    const { data: latest } = await supabase
+      .from('inventory_movements')
+      .select('id')
+      .eq('book_id', bookId)
+      .eq('type', 'receive')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (latest?.id) {
+      await supabase
+        .from('inventory_movements')
+        .update({
+          vendor_id: vendorId ?? null,
+          vendor_name: vendorLabel,
+          reason,
+        } as never)
+        .eq('id', latest.id)
+    }
   }
 
   await writeAuditLog({
     action: 'vendor_receive',
     entity: 'book',
     entityId: bookId,
-    details: `Vendor received ${quantity}x "${bookName}" onto store shelf`,
+    details: `${quantity}x "${bookName}" from ${vendorLabel} → store shelf`,
     performedBy: user.uid,
     performedByName: user.displayName,
     role: user.role,
@@ -1095,6 +1123,8 @@ export async function writeMovement(params: {
   boxId?: string
   transferId?: string
   saleId?: string
+  vendorId?: string
+  vendorName?: string
   reason: string
   performedBy: string
   performedByName: string
@@ -1112,10 +1142,12 @@ export async function writeMovement(params: {
       box_id: params.boxId ?? null,
       transfer_id: params.transferId ?? null,
       sale_id: params.saleId ?? null,
+      vendor_id: params.vendorId ?? null,
+      vendor_name: params.vendorName ?? null,
       reason: params.reason,
       performed_by: params.performedBy,
       performed_by_name: params.performedByName,
-    })
+    } as never)
     .select('id')
     .single()
   if (error) fail(error, 'Failed to record movement')
