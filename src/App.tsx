@@ -12,33 +12,20 @@ import { PageSpinner } from '@/components/ui/Spinner'
 import { isSupabaseConfigured } from '@/lib/supabase'
 import Login from '@/pages/Login'
 import HomeRedirect from '@/pages/HomeRedirect'
-import CartonSheet from '@/pages/CartonSheet'
+import ReceiveHub from '@/pages/ReceiveHub'
 import AddStock from '@/pages/AddStock'
-import StoreShelf from '@/pages/StoreShelf'
-import StoreBackroom from '@/pages/StoreBackroom'
-import PutOnSale from '@/pages/PutOnSale'
 import VendorReceive from '@/pages/VendorReceive'
+import SendPage from '@/pages/SendPage'
+import CartonSheet from '@/pages/CartonSheet'
 import Books from '@/pages/Books'
 import BookDetail from '@/pages/BookDetail'
 import Settings from '@/pages/Settings'
 import AccountSettings from '@/pages/AccountSettings'
-import Receive from '@/pages/Receive'
-import BoxesPage from '@/pages/Boxes'
-import Transfers from '@/pages/Transfers'
-import Scan from '@/pages/Scan'
-import Move from '@/pages/Move'
 
 const POS = lazy(() => import('@/pages/POS'))
 const Discounts = lazy(() => import('@/pages/Discounts'))
 const SuperAdmin = lazy(() => import('@/pages/SuperAdmin'))
-const Reports = lazy(() => import('@/pages/Reports'))
 const Warehouses = lazy(() => import('@/pages/Warehouses'))
-const Inventory = lazy(() => import('@/pages/Inventory'))
-const StocktakePage = lazy(() => import('@/pages/Stocktake'))
-const ShelfLocationsPage = lazy(() => import('@/pages/ShelfLocations'))
-const Stock = lazy(() => import('@/pages/Stock'))
-const ImportStock = lazy(() => import('@/pages/ImportStock'))
-const DataView = lazy(() => import('@/pages/DataView'))
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -61,8 +48,7 @@ function MissingConfig() {
         <h1 className="text-xl font-semibold text-slate-900">Supabase is not configured</h1>
         <p className="text-sm text-slate-600">
           Set <code className="text-xs bg-slate-100 px-1 rounded">VITE_SUPABASE_URL</code> and{' '}
-          <code className="text-xs bg-slate-100 px-1 rounded">VITE_SUPABASE_PUBLISHABLE_KEY</code> in
-          Vercel → Project Settings → Environment Variables, then redeploy.
+          <code className="text-xs bg-slate-100 px-1 rounded">VITE_SUPABASE_PUBLISHABLE_KEY</code>.
         </p>
       </div>
     </div>
@@ -70,9 +56,7 @@ function MissingConfig() {
 }
 
 function App() {
-  if (!isSupabaseConfigured) {
-    return <MissingConfig />
-  }
+  if (!isSupabaseConfigured) return <MissingConfig />
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -83,7 +67,6 @@ function App() {
               <WarehouseProvider>
                 <Routes>
                   <Route path="/login" element={<Login />} />
-
                   <Route
                     element={
                       <ProtectedRoute>
@@ -93,73 +76,37 @@ function App() {
                   >
                     <Route index element={<HomeRedirect />} />
 
-                    {/* Warehouse (Nepalaya) */}
-                    <Route path="cartons" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
-                        <CartonSheet />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="add-stock" element={
+                    <Route path="receive" element={<ReceiveHub />} />
+                    <Route path="receive/warehouse" element={
                       <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
                         <AddStock />
                       </ProtectedRoute>
                     } />
-                    <Route path="move" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
-                        <Move />
-                      </ProtectedRoute>
-                    } />
-
-                    {/* Store */}
-                    <Route path="shelf" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'cashier']}>
-                        <StoreShelf />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="backroom" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'cashier']}>
-                        <StoreBackroom />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="put-on-sale" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'cashier']}>
-                        <PutOnSale />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="vendor" element={
+                    <Route path="receive/vendor" element={
                       <ProtectedRoute allowedRoles={['superadmin', 'admin', 'cashier']}>
                         <VendorReceive />
                       </ProtectedRoute>
                     } />
 
-                    <Route path="books" element={<Books />} />
-                    <Route path="books/manage" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
-                        <Lazy><Stock /></Lazy>
-                      </ProtectedRoute>
-                    } />
-                    <Route path="books/:id" element={<BookDetail />} />
-
-                    <Route path="import" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
-                        <Lazy><ImportStock /></Lazy>
-                      </ProtectedRoute>
-                    } />
-                    <Route path="data" element={
-                      <ProtectedRoute allowedRoles={['superadmin']}>
-                        <Lazy><DataView /></Lazy>
+                    <Route path="send" element={
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'cashier']}>
+                        <SendPage />
                       </ProtectedRoute>
                     } />
 
-                    <Route path="pos" element={
+                    <Route path="sell" element={
                       <ProtectedRoute allowedRoles={['superadmin', 'admin', 'cashier']}>
                         <Lazy><POS /></Lazy>
                       </ProtectedRoute>
                     } />
+                    <Route path="pos" element={<Navigate to="/sell" replace />} />
 
-                    <Route path="reports" element={
+                    <Route path="books" element={<Books />} />
+                    <Route path="books/:id" element={<BookDetail />} />
+
+                    <Route path="cartons" element={
                       <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
-                        <Lazy><Reports /></Lazy>
+                        <CartonSheet />
                       </ProtectedRoute>
                     } />
 
@@ -175,75 +122,30 @@ function App() {
                         <Lazy><SuperAdmin /></Lazy>
                       </ProtectedRoute>
                     } />
+                    <Route path="settings/warehouses" element={
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
+                        <Lazy><Warehouses /></Lazy>
+                      </ProtectedRoute>
+                    } />
 
-                    <Route path="warehouse/receive" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
-                        <Receive />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="warehouse/transfers" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
-                        <Transfers />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="warehouse/cartons" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'cashier']}>
-                        <BoxesPage />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="warehouse/scan" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'cashier']}>
-                        <Scan />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="warehouse/count" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
-                        <Lazy><StocktakePage /></Lazy>
-                      </ProtectedRoute>
-                    } />
-                    <Route path="warehouse/locations" element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
-                        <Lazy><ShelfLocationsPage /></Lazy>
-                      </ProtectedRoute>
-                    } />
-                    <Route path="warehouse" element={<Navigate to="/cartons" replace />} />
-                  </Route>
+                    {/* Old URLs → new */}
+                    <Route path="move" element={<Navigate to="/send" replace />} />
+                    <Route path="scan" element={<Navigate to="/send" replace />} />
+                    <Route path="put-on-sale" element={<Navigate to="/send" replace />} />
+                    <Route path="vendor" element={<Navigate to="/receive/vendor" replace />} />
+                    <Route path="add-stock" element={<Navigate to="/receive/warehouse" replace />} />
+                    <Route path="shelf" element={<Navigate to="/books" replace />} />
+                    <Route path="backroom" element={<Navigate to="/send" replace />} />
+                    <Route path="stock" element={<Navigate to="/books" replace />} />
+                    <Route path="warehouse/*" element={<Navigate to="/cartons" replace />} />
+                    <Route path="import" element={<Navigate to="/receive/warehouse" replace />} />
+                    <Route path="data" element={<Navigate to="/books" replace />} />
+                    <Route path="reports" element={<Navigate to="/settings" replace />} />
+                    <Route path="books/manage" element={<Navigate to="/books" replace />} />
+                    <Route path="ops" element={<Navigate to="/receive" replace />} />
+                    <Route path="dashboard" element={<Navigate to="/" replace />} />                  </Route>
 
-                  <Route path="/stock" element={<Navigate to="/shelf" replace />} />
-                  <Route path="/inventory" element={<Navigate to="/data" replace />} />
-                  <Route path="/boxes" element={<Navigate to="/cartons" replace />} />
-                  <Route path="/receive" element={<Navigate to="/add-stock" replace />} />
-                  <Route path="/transfers" element={<Navigate to="/move" replace />} />
-                  <Route path="/scan" element={<Navigate to="/warehouse/scan" replace />} />
-                  <Route path="/stocktake" element={<Navigate to="/warehouse/count" replace />} />
-                  <Route path="/shelves" element={<Navigate to="/warehouse/locations" replace />} />
-                  <Route path="/warehouses" element={<Navigate to="/settings/warehouses" replace />} />
-                  <Route path="/warehouse-dashboard" element={<Navigate to="/" replace />} />
-                  <Route path="/discounts" element={<Navigate to="/settings/discounts" replace />} />
-                  <Route path="/admin" element={<Navigate to="/data" replace />} />
                   <Route path="/account" element={<Navigate to="/settings/account" replace />} />
-
-                  <Route
-                    path="/settings/warehouses"
-                    element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
-                        <Layout>
-                          <Lazy><Warehouses /></Lazy>
-                        </Layout>
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/settings/inventory"
-                    element={
-                      <ProtectedRoute allowedRoles={['superadmin', 'admin', 'cashier']}>
-                        <Layout>
-                          <Lazy><Inventory /></Lazy>
-                        </Layout>
-                      </ProtectedRoute>
-                    }
-                  />
-
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
               </WarehouseProvider>
@@ -253,8 +155,6 @@ function App() {
               toastOptions={{
                 duration: 3500,
                 style: { borderRadius: '10px', fontSize: '14px' },
-                success: { iconTheme: { primary: '#22c55e', secondary: '#fff' } },
-                error: { iconTheme: { primary: '#ef4444', secondary: '#fff' } },
               }}
             />
           </AuthProvider>

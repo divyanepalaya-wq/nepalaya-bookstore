@@ -22,6 +22,12 @@ export function isThirdParty(book: Pick<Book, 'language'> | BookType | string | 
   return v === 'Nepali' || v === 'English'
 }
 
+export const CATEGORY_OPTIONS: { value: BookType; label: string; hint: string }[] = [
+  { value: 'Nepalaya', label: 'Nepalaya', hint: 'Warehouse cartons · गोदाम' },
+  { value: 'Nepali', label: 'Nepali', hint: 'Vendor → shelf · कार्टुन छैन' },
+  { value: 'English', label: 'English', hint: 'Vendor → shelf · कार्टुन छैन' },
+]
+
 export const CATEGORY_FILTERS: { value: '' | BookType; label: string }[] = [
   { value: '', label: 'All' },
   { value: 'Nepalaya', label: 'Nepalaya' },

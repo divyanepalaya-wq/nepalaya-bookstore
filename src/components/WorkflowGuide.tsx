@@ -1,61 +1,51 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
-  ArrowRightLeft, Store, ShoppingCart, HelpCircle,
-  ScanBarcode, Printer, Warehouse, Boxes, ChevronRight, Keyboard, Package,
+  Inbox, Send, ShoppingCart, HelpCircle, BookOpen, Boxes,
+  ChevronRight, Keyboard, Package, Store, Warehouse,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/utils'
 
-const GUIDE_SEEN_KEY = 'nepalaya-guide-seen-v4'
+const GUIDE_SEEN_KEY = 'nepalaya-guide-seen-v5'
 
 const FLOW_STEPS = [
   {
     n: 1,
-    title: 'Add Nepalaya cartons',
-    body: 'Warehouse: open Cartons or Add stock. Enter pieces and pcs per carton (about 24). Print labels and stick them on.',
-    action: '/add-stock',
-    actionLabel: 'Add stock',
-    icon: Package,
+    title: 'Receive',
+    body: 'Nepalaya · warehouse cartons. Nepali & English · straight to shelf · कार्टुन छैन.',
+    action: '/receive',
+    actionLabel: 'Receive',
+    icon: Inbox,
   },
   {
     n: 2,
-    title: 'Send to backroom',
-    body: 'Scan a carton → Send to backroom (one tap).',
-    action: '/move',
-    actionLabel: 'Move',
-    icon: ArrowRightLeft,
+    title: 'Send',
+    body: 'Scan a carton → backroom (whole) or store shelf (pieces). One place for move + scan.',
+    action: '/send',
+    actionLabel: 'Send',
+    icon: Send,
   },
   {
     n: 3,
-    title: 'Put on shelf / vendor books',
-    body: 'Store: Put on sale from a backroom carton. For Nepali/English vendor books, use Receive vendor (straight to shelf, no carton).',
-    action: '/put-on-sale',
-    actionLabel: 'Put on sale',
-    icon: Store,
-  },
-  {
-    n: 4,
     title: 'Sell',
-    body: 'Open Sell. Stock comes from the store shelf only.',
-    action: '/pos',
+    body: 'Search → cart → pay. Stock comes from the store shelf only.',
+    action: '/sell',
     actionLabel: 'Sell',
     icon: ShoppingCart,
   },
 ]
 
 const SHORTCUTS = [
-  { keys: '?', desc: 'Open this help guide' },
-  { keys: '[', desc: 'Collapse / expand sidebar' },
-  { keys: 'G then H', desc: 'Stock overview' },
+  { keys: '?', desc: 'Open this help' },
+  { keys: '[', desc: 'Collapse sidebar' },
+  { keys: 'G then R', desc: 'Receive' },
+  { keys: 'G then N', desc: 'Send' },
+  { keys: 'G then P', desc: 'Sell' },
   { keys: 'G then B', desc: 'Books' },
-  { keys: 'G then S', desc: 'Scan' },
-  { keys: 'G then M', desc: 'Move' },
-  { keys: 'G then I', desc: 'Import' },
-  { keys: 'G then P', desc: 'Sell (POS)' },
-  { keys: 'G then D', desc: 'Data' },
-  { keys: 'Esc', desc: 'Close camera / modals' },
+  { keys: 'G then C', desc: 'Cartons' },
+  { keys: 'Esc', desc: 'Close modals' },
 ]
 
 interface WorkflowGuideProps {
@@ -73,14 +63,14 @@ export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Nepalaya Books — Publishing ops" size="lg">
+    <Modal open={open} onClose={onClose} title="How stock moves" size="lg">
       <div className="space-y-4">
         <div className="flex gap-1 p-1 bg-gray-100 rounded-lg">
           {([
-            { id: 'flow' as const, label: 'The journey' },
-            { id: 'roles' as const, label: 'Who does what' },
-            { id: 'keys' as const, label: 'Keyboard' },
-            { id: 'help' as const, label: 'If stuck' },
+            { id: 'flow' as const, label: 'Flow' },
+            { id: 'roles' as const, label: 'Who' },
+            { id: 'keys' as const, label: 'Keys' },
+            { id: 'help' as const, label: 'Stuck?' },
           ]).map((t) => (
             <button
               key={t.id}
@@ -99,16 +89,14 @@ export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
         {tab === 'flow' && (
           <div className="space-y-3">
             <p className="text-sm text-gray-600">
-              Simple path: Import → Move → Put on sale → Sell. Check Stock anytime for cartons and pieces.
+              Receive · Send · Sell. Books and Cartons for looking things up.
             </p>
 
             <div className="flex flex-wrap items-center justify-center gap-1 sm:gap-2 py-3 px-2 rounded-xl bg-gradient-to-r from-blue-50 via-orange-50 to-green-50 border border-gray-100">
               {[
-                { label: 'Import', icon: Printer, color: 'text-gray-700 bg-gray-100' },
-                { label: 'Warehouse', icon: Warehouse, color: 'text-blue-700 bg-blue-100' },
-                { label: 'Backroom', icon: Boxes, color: 'text-orange-700 bg-orange-100' },
-                { label: 'Store', icon: Store, color: 'text-green-700 bg-green-100' },
-                { label: 'Sell', icon: ShoppingCart, color: 'text-brand-700 bg-brand-100' },
+                { label: 'Receive', icon: Inbox, color: 'text-blue-700 bg-blue-100' },
+                { label: 'Send', icon: Send, color: 'text-orange-700 bg-orange-100' },
+                { label: 'Sell', icon: ShoppingCart, color: 'text-green-700 bg-green-100' },
               ].map((s, i) => (
                 <div key={s.label} className="flex items-center gap-1 sm:gap-2">
                   {i > 0 && <ChevronRight className="h-4 w-4 text-gray-300 shrink-0" />}
@@ -143,18 +131,8 @@ export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
             <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-xs text-amber-800 flex gap-2">
               <Package className="h-4 w-4 shrink-0 mt-0.5" />
               <span>
-                <strong>Stock</strong> shows cartons + pieces by Warehouse / Backroom / Store. Use <strong>Data</strong> to browse everything.
+                <strong>Books</strong> = catalog (add / edit / remove). <strong>Cartons</strong> = Nepalaya warehouse sheet.
               </span>
-            </div>
-
-            <div className="rounded-lg border border-gray-100 px-3 py-2 text-xs text-gray-600">
-              <p className="font-semibold text-gray-800 mb-1">Quick checklist</p>
-              <ul className="list-disc pl-4 space-y-0.5">
-                <li>Import a small sheet and print labels</li>
-                <li>Move one carton Warehouse → Backroom</li>
-                <li>Put a few pieces on sale → confirm Store stock rose</li>
-                <li>Sell one copy in Sell (POS)</li>
-              </ul>
             </div>
           </div>
         )}
@@ -163,10 +141,10 @@ export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
           <div className="space-y-3">
             <div className="rounded-xl border border-green-100 bg-green-50/50 p-4">
               <p className="font-semibold text-green-900 text-sm flex items-center gap-2">
-                <Store className="h-4 w-4" /> Cashier
+                <Store className="h-4 w-4" /> Store · receptionist
               </p>
               <p className="text-xs text-green-800 mt-1 leading-relaxed">
-                Dashboard, Books (read), Store POS, Settings. Sell from Bookstore Floor only.
+                Receive vendor books · Sell · Books. Log: “X book came from vendor → bookstore.”
               </p>
             </div>
             <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
@@ -174,18 +152,20 @@ export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
                 <Warehouse className="h-4 w-4" /> Warehouse
               </p>
               <p className="text-xs text-blue-800 mt-1 leading-relaxed">
-                Stock, Cartons, Move, Scan, Import. Put books on sale when the floor is low.
+                Receive Nepalaya cartons · Send to backroom or shelf · Cartons sheet.
               </p>
             </div>
             <div className="rounded-xl border border-gray-200 bg-gray-50/50 p-4">
-              <p className="font-semibold text-gray-900 text-sm">Admin</p>
+              <p className="font-semibold text-gray-900 text-sm flex items-center gap-2">
+                <BookOpen className="h-4 w-4" /> Admin
+              </p>
               <p className="text-xs text-gray-600 mt-1 leading-relaxed">
-                Everything above, plus Data, staff, discounts, and advanced tools in Settings.
+                Everything · staff · discounts · locations in Settings.
               </p>
             </div>
             <div className="rounded-lg border border-gray-100 px-3 py-2 text-xs text-gray-600 flex gap-2">
-              <ScanBarcode className="h-4 w-4 shrink-0 mt-0.5 text-accent-600" />
-              Tip: press <kbd className="px-1.5 py-0.5 rounded bg-gray-100 font-mono text-[10px]">?</kbd> anytime to reopen this guide.
+              <Boxes className="h-4 w-4 shrink-0 mt-0.5 text-accent-600" />
+              Tip: press <kbd className="px-1.5 py-0.5 rounded bg-gray-100 font-mono text-[10px]">?</kbd> anytime for this guide.
             </div>
           </div>
         )}
@@ -193,7 +173,7 @@ export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
         {tab === 'keys' && (
           <div className="space-y-2">
             <p className="text-sm text-gray-600 flex items-center gap-2">
-              <Keyboard className="h-4 w-4" /> Shortcuts (desktop)
+              <Keyboard className="h-4 w-4" /> Shortcuts
             </p>
             <ul className="divide-y divide-gray-100 rounded-xl border border-gray-100 overflow-hidden">
               {SHORTCUTS.map((s) => (
@@ -211,21 +191,21 @@ export function WorkflowGuide({ open, onClose }: WorkflowGuideProps) {
         {tab === 'help' && (
           <div className="space-y-3 text-sm text-gray-700">
             <div className="rounded-lg border border-gray-100 px-3 py-2.5">
-              <p className="font-semibold text-gray-900">Carton already moved / in transit</p>
+              <p className="font-semibold text-gray-900">Move vs Scan?</p>
               <p className="text-xs text-gray-600 mt-1">
-                Open Settings → Advanced → Transfers, find the transfer, and Receive it. Or scan the carton under Scan.
+                Same job — both are now <strong>Send</strong>. Scan the carton, then choose backroom or shelf.
               </p>
             </div>
             <div className="rounded-lg border border-gray-100 px-3 py-2.5">
-              <p className="font-semibold text-gray-900">Sale failed after payment</p>
+              <p className="font-semibold text-gray-900">Carton stuck in transit</p>
               <p className="text-xs text-gray-600 mt-1">
-                Don’t tap Pay again with a new cart. Refresh POS, check Sales / Reports for the receipt. If missing, contact Admin — retries use the same request so stock won’t double.
+                Open Send, scan again, or ask admin to check the transfer.
               </p>
             </div>
             <div className="rounded-lg border border-gray-100 px-3 py-2.5">
-              <p className="font-semibold text-gray-900">Forgot password</p>
+              <p className="font-semibold text-gray-900">Sale failed after pay</p>
               <p className="text-xs text-gray-600 mt-1">
-                Ask an Admin (Settings → Staff accounts) to reset your password or send a reset email.
+                Don’t tap Pay again. Refresh Sell and check if the sale landed. Retries reuse the same request so stock won’t double.
               </p>
             </div>
           </div>

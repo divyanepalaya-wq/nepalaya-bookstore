@@ -99,8 +99,8 @@ export default function CartonSheet() {
             Nepalaya · गोदाम स्टक · {totals.titles} titles · {totals.boxesN} cartons · {totals.pcs.toLocaleString()} pcs
           </p>
         </div>
-        <Button size="lg" className="min-h-12 px-5 text-base" onClick={() => navigate('/add-stock')}>
-          <PackagePlus className="h-5 w-5" /> Add stock
+        <Button size="lg" className="min-h-12 px-5 text-base" onClick={() => navigate('/receive/warehouse')}>
+          <PackagePlus className="h-5 w-5" /> Receive
         </Button>
       </div>
 

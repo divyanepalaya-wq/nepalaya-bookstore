@@ -63,7 +63,7 @@ export default function VendorReceive() {
         user: appUser,
       })
       setLastOk({ name: selected.name, qty: n, before, after: before + n })
-      toast.success(`Added ${n} to shelf`)
+      toast.success(`${n} pcs · ${selected.name} came from vendor → shelf`)
       setQty('')
       setSelected(null)
       setBookSearch('')
@@ -94,7 +94,7 @@ export default function VendorReceive() {
           <div>
             <p className="font-semibold text-green-900">{lastOk.name}</p>
             <p className="text-sm text-green-800 mt-1">
-              +{lastOk.qty} · shelf {lastOk.before} → <strong>{lastOk.after}</strong>
+              {lastOk.qty} pcs came from vendor → bookstore · shelf {lastOk.before} → <strong>{lastOk.after}</strong>
             </p>
           </div>
         </div>

@@ -39,9 +39,9 @@ export function isStoreOperator(role: UserRole | undefined): boolean {
 
 /** Default landing path by role. */
 export function homePath(role: UserRole | undefined): string {
-  if (role === 'cashier') return '/shelf'
+  if (role === 'cashier') return '/sell'
   if (role === 'admin') return '/cartons'
-  return '/shelf' // superadmin sees store-first + warehouse links
+  return '/receive'
 }
 
 export function cartonStatusLabel(status: BoxStatus | string): string {
