@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { PackagePlus, Truck } from 'lucide-react'
+import { PackagePlus, Truck, RotateCcw } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { canWarehouse, canPOS } from '@/lib/roles'
 import { cn } from '@/lib/utils'
@@ -30,6 +30,15 @@ export default function ReceiveHub() {
       color: 'border-green-200 bg-green-50/80 hover:bg-green-50',
       iconColor: 'text-green-700',
     },
+    {
+      show: wh,
+      to: '/fix',
+      title: 'Undo stock',
+      sub: 'Reverse mistaken receive or put on sale',
+      icon: RotateCcw,
+      color: 'border-amber-200 bg-amber-50/80 hover:bg-amber-50',
+      iconColor: 'text-amber-700',
+    },
   ].filter((c) => c.show)
 
   return (
@@ -37,7 +46,7 @@ export default function ReceiveHub() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Stock in</h1>
         <p className="text-sm text-gray-500 mt-0.5">
-          Add books that arrived · mistaken adds can be undone on the book page
+          Add books that arrived · use Undo stock if you made a mistake
         </p>
       </div>
 

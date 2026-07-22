@@ -648,6 +648,80 @@ export async function replenishRetail(params: {
   })
 }
 
+/**
+ * Undo "put on sale": move pieces from store shelf back into the carton.
+ */
+export async function undoReplenish(params: {
+  boxId: string
+  quantity: number
+  bookstoreId: string
+  reason?: string
+  user: AppUser
+}): Promise<void> {
+  const { boxId, quantity, bookstoreId, reason, user } = params
+  if (quantity <= 0) throw new Error('Quantity must be positive')
+
+  const { data: row, error: fetchErr } = await supabase
+    .from('boxes')
+    .select('*')
+    .eq('id', boxId)
+    .maybeSingle()
+  if (fetchErr) fail(fetchErr, 'Could not load carton')
+  if (!row) throw new Error('Carton not found')
+  const box = mapBox(row as Record<string, unknown>)
+
+  // Shelf → warehouse location of this carton
+  await adjustLocationQty({
+    bookId: box.bookId,
+    locationId: bookstoreId,
+    bookstoreId,
+    delta: -quantity,
+  })
+  await adjustLocationQty({
+    bookId: box.bookId,
+    locationId: box.warehouseId,
+    bookstoreId,
+    delta: quantity,
+  })
+
+  const nextQty = box.quantity + quantity
+  const nextStatus =
+    nextQty <= 0 ? 'empty' : box.status === 'empty' || box.status === 'in_transit' ? 'open' : box.status
+  const { error: boxErr } = await supabase
+    .from('boxes')
+    .update({
+      quantity: nextQty,
+      status: nextStatus,
+      is_deleted: false,
+    })
+    .eq('id', boxId)
+  if (boxErr) fail(boxErr, 'Could not restore carton')
+
+  await writeMovement({
+    type: 'adjustment',
+    bookId: box.bookId,
+    bookName: box.bookName,
+    quantity: -quantity,
+    warehouseId: bookstoreId,
+    fromWarehouseId: bookstoreId,
+    toWarehouseId: box.warehouseId,
+    boxId,
+    reason: reason?.trim() || `Undo put on sale · back to ${box.barcode}`,
+    performedBy: user.uid,
+    performedByName: user.displayName,
+  })
+
+  await writeAuditLog({
+    action: 'stock_adjusted',
+    entity: 'box',
+    entityId: boxId,
+    details: `Undid replenish: ${quantity} pcs back to carton ${box.barcode}`,
+    performedBy: user.uid,
+    performedByName: user.displayName,
+    role: user.role,
+  })
+}
+
 // ─── Lookups ──────────────────────────────────────────────────────────────────
 
 export async function findBoxByBarcode(barcode: string): Promise<(Box & { id: string }) | null> {

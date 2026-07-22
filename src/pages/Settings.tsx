@@ -1,9 +1,16 @@
 import { Link } from 'react-router-dom'
-import { User, Percent, Users, Warehouse, ChevronRight } from 'lucide-react'
+import { User, Percent, Users, Warehouse, ChevronRight, RotateCcw } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { roleLabel, isFullAdmin } from '@/lib/roles'
 
 const links = [
+  {
+    to: '/fix',
+    label: 'Undo stock',
+    desc: 'Reverse mistaken receive or put on sale',
+    icon: RotateCcw,
+    show: (role?: string) => role === 'admin' || role === 'superadmin',
+  },
   {
     to: '/settings/account',
     label: 'Account',

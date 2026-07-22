@@ -19,6 +19,7 @@ import SendPage from '@/pages/SendPage'
 import CartonSheet from '@/pages/CartonSheet'
 import Books from '@/pages/Books'
 import BookDetail from '@/pages/BookDetail'
+import FixStock from '@/pages/FixStock'
 import Settings from '@/pages/Settings'
 import AccountSettings from '@/pages/AccountSettings'
 
@@ -107,6 +108,12 @@ function App() {
                     <Route path="cartons" element={
                       <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
                         <CartonSheet />
+                      </ProtectedRoute>
+                    } />
+
+                    <Route path="fix" element={
+                      <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
+                        <FixStock />
                       </ProtectedRoute>
                     } />
 
